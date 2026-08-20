@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { formatCard, handValue, type Card } from "@/lib/cards";
+import { computePayout } from "@/lib/payouts";
 
 interface Player {
   seat: number;
@@ -19,6 +20,13 @@ const STATUS_LABEL: Record<Player["status"], string> = {
   bust: "bust",
   blackjack: "blackjack!",
 };
+
+function outcomeLabel(player: Player, dealerHand: Card[]): string {
+  const payout = computePayout(player.status, player.hand, dealerHand, player.bet);
+  if (payout === 0) return "lost";
+  if (payout === player.bet) return "push";
+  return "won";
+}
 
 function Hand({ cards, label }: { cards: Card[]; label?: string }) {
   if (cards.length === 0) return null;
@@ -184,10 +192,16 @@ export default function RoomView({
                   <span className="text-xs text-zinc-500 dark:text-zinc-400">Bet: {player.bet}</span>
                 )}
                 <Hand cards={player.hand} />
-                {STATUS_LABEL[player.status] && (
-                  <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                    {STATUS_LABEL[player.status]}
+                {status === "round_over" ? (
+                  <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                    {outcomeLabel(player, dealerHand)}
                   </span>
+                ) : (
+                  STATUS_LABEL[player.status] && (
+                    <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                      {STATUS_LABEL[player.status]}
+                    </span>
+                  )
                 )}
               </>
             ) : (
@@ -197,7 +211,7 @@ export default function RoomView({
         ))}
       </div>
 
-      {status === "waiting" && self && (
+      {(status === "waiting" || status === "round_over") && self && (
         <button
           onClick={handleStartRound}
           disabled={busy}
@@ -268,7 +282,7 @@ export default function RoomView({
       {status === "round_over" && (
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
           Round over. Dealer {handValue(dealerHand).isBust ? "busts" : `has ${handValue(dealerHand).total}`}.
-          Payouts are coming next.
+          Balances updated — start another round when ready.
         </p>
       )}
 

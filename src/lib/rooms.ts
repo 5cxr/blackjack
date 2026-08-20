@@ -1,8 +1,9 @@
 import { db } from "@/db";
 import { rooms, roomPlayers, users } from "@/db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { createShoe, handValue, playDealerHand, type Card } from "./cards";
 import { nextTurnSeat } from "./turn-order";
+import { computePayout } from "./payouts";
 import type { PlayerHandStatus } from "@/db/schema";
 
 export const MAX_SEATS = 6;
@@ -18,6 +19,25 @@ function generateCode(): string {
 }
 
 export class RoomError extends Error {}
+
+/** Credits every seated player's payout for the round now that the dealer's hand is final. */
+async function settleRound(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  roomId: string,
+  dealerHand: Card[]
+) {
+  const players = await tx.select().from(roomPlayers).where(eq(roomPlayers.roomId, roomId));
+
+  for (const p of players) {
+    const payout = computePayout(p.status, p.hand, dealerHand, p.bet);
+    if (payout > 0) {
+      await tx
+        .update(users)
+        .set({ balance: sql`${users.balance} + ${payout}` })
+        .where(eq(users.id, p.userId));
+    }
+  }
+}
 
 export async function createRoom(hostUserId: string) {
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -53,7 +73,9 @@ export async function joinRoom(code: string, userId: string) {
       .for("update");
 
     if (!room) throw new RoomError("Room not found.");
-    if (room.status !== "waiting") throw new RoomError("Room already started.");
+    if (room.status !== "waiting" && room.status !== "round_over") {
+      throw new RoomError("Room already started.");
+    }
 
     const existingPlayers = await tx
       .select()
@@ -117,7 +139,9 @@ export async function startRound(code: string, userId: string) {
   return db.transaction(async (tx) => {
     const [room] = await tx.select().from(rooms).where(eq(rooms.code, code)).for("update");
     if (!room) throw new RoomError("Room not found.");
-    if (room.status !== "waiting") throw new RoomError("A round is already in progress.");
+    if (room.status !== "waiting" && room.status !== "round_over") {
+      throw new RoomError("A round is already in progress.");
+    }
 
     const players = await tx.select().from(roomPlayers).where(eq(roomPlayers.roomId, room.id));
     if (!players.some((p) => p.userId === userId)) {
@@ -209,6 +233,7 @@ export async function placeBet(code: string, userId: string, amount: number) {
         // Everyone was dealt a natural blackjack — no player turns at all,
         // dealer resolves immediately.
         const resolved = playDealerHand(dealerHand, remainingShoe);
+        await settleRound(tx, room.id, resolved.dealerHand);
         await tx
           .update(rooms)
           .set({
@@ -251,6 +276,7 @@ async function advanceTurn(
 
   const [room] = await tx.select().from(rooms).where(eq(rooms.id, roomId));
   const resolved = playDealerHand(room.dealerHand, room.shoe);
+  await settleRound(tx, roomId, resolved.dealerHand);
 
   await tx
     .update(rooms)
