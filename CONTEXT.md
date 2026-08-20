@@ -41,6 +41,7 @@ Web-based blackjack, virtual currency only. Players join rooms ("tables"), each 
 - Player-vs-player betting (this is vs-dealer only, shared table just for social/turn structure)
 - Full auth provider (Clerk/Auth0) — revisit only if project needs real accounts later
 - Insurance side-bet (maybe stretch)
+- Visual design pass — UI is currently plain Tailwind, functional only. Game logic and realtime sync were the priority for v1; styling is a deliberate follow-up, not an oversight.
 
 ## Notes on why these choices
 - Shared table (vs solo-per-lobby) chosen deliberately for harder realtime sync — bigger portfolio signal than trivial single-player state.
