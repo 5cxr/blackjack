@@ -79,8 +79,39 @@ export default function RoomView({
   }
 
   useEffect(() => {
-    const interval = setInterval(refresh, 2000);
-    return () => clearInterval(interval);
+    let socket: WebSocket | null = null;
+    let reconnectDelay = 1000;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+
+    function connect() {
+      if (stopped) return;
+      const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      socket = new WebSocket(`${wsProtocol}//${window.location.host}/api/ws?code=${code}`);
+      socket.addEventListener("open", () => {
+        reconnectDelay = 1000;
+      });
+      socket.addEventListener("message", () => {
+        refresh();
+      });
+      socket.addEventListener("close", () => {
+        if (stopped) return;
+        reconnectTimer = setTimeout(connect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+      });
+    }
+    connect();
+
+    // Safety net: covers a WS that's unavailable or drops without a clean
+    // 'close' event, so the table never goes fully stale even then.
+    const fallback = setInterval(refresh, 15000);
+
+    return () => {
+      stopped = true;
+      socket?.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      clearInterval(fallback);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);
 

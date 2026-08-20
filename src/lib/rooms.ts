@@ -4,6 +4,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { createShoe, handValue, playDealerHand, type Card } from "./cards";
 import { nextTurnSeat } from "./turn-order";
 import { computePayout } from "./payouts";
+import { publishRoomUpdate } from "./room-events";
 import type { PlayerHandStatus } from "@/db/schema";
 
 export const MAX_SEATS = 6;
@@ -65,7 +66,7 @@ export async function createRoom(hostUserId: string) {
 }
 
 export async function joinRoom(code: string, userId: string) {
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const [room] = await tx
       .select()
       .from(rooms)
@@ -97,6 +98,9 @@ export async function joinRoom(code: string, userId: string) {
 
     return { room, seat };
   });
+
+  await publishRoomUpdate(code);
+  return result;
 }
 
 export async function getRoomByCode(code: string) {
@@ -136,7 +140,7 @@ export async function getRoomByCode(code: string) {
 const MIN_BET = 1;
 
 export async function startRound(code: string, userId: string) {
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const [room] = await tx.select().from(rooms).where(eq(rooms.code, code)).for("update");
     if (!room) throw new RoomError("Room not found.");
     if (room.status !== "waiting" && room.status !== "round_over") {
@@ -161,6 +165,9 @@ export async function startRound(code: string, userId: string) {
 
     return updatedRoom;
   });
+
+  await publishRoomUpdate(code);
+  return result;
 }
 
 export async function placeBet(code: string, userId: string, amount: number) {
@@ -168,7 +175,7 @@ export async function placeBet(code: string, userId: string, amount: number) {
     throw new RoomError(`Bet must be a whole number of at least ${MIN_BET}.`);
   }
 
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const [room] = await tx.select().from(rooms).where(eq(rooms.code, code)).for("update");
     if (!room) throw new RoomError("Room not found.");
     if (room.status !== "betting") throw new RoomError("Betting is not open right now.");
@@ -253,6 +260,9 @@ export async function placeBet(code: string, userId: string, amount: number) {
 
     return { balance: updatedUser.balance, bet: amount, dealt: allBet };
   });
+
+  await publishRoomUpdate(code);
+  return result;
 }
 
 /**
@@ -310,7 +320,7 @@ async function loadActingPlayer(
 }
 
 export async function hit(code: string, userId: string) {
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const { room, player } = await loadActingPlayer(tx, code, userId);
     if (room.shoe.length === 0) throw new RoomError("Shoe exhausted, cannot deal another card.");
 
@@ -328,10 +338,13 @@ export async function hit(code: string, userId: string) {
 
     return { hand, status };
   });
+
+  await publishRoomUpdate(code);
+  return result;
 }
 
 export async function stand(code: string, userId: string) {
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const { room, player } = await loadActingPlayer(tx, code, userId);
 
     await tx.update(roomPlayers).set({ status: "stood" }).where(eq(roomPlayers.id, player.id));
@@ -339,10 +352,13 @@ export async function stand(code: string, userId: string) {
 
     return { hand: player.hand, status: "stood" as const };
   });
+
+  await publishRoomUpdate(code);
+  return result;
 }
 
 export async function doubleDown(code: string, userId: string) {
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const { room, player } = await loadActingPlayer(tx, code, userId);
     if (player.hand.length !== 2) {
       throw new RoomError("Double down is only allowed as your first action.");
@@ -370,4 +386,7 @@ export async function doubleDown(code: string, userId: string) {
 
     return { hand, status, bet: player.bet * 2, balance: user.balance - player.bet };
   });
+
+  await publishRoomUpdate(code);
+  return result;
 }
