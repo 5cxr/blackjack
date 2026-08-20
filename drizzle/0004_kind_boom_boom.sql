@@ -1,0 +1,1 @@
+ALTER TABLE "rooms" ADD COLUMN "last_active_at" timestamp with time zone DEFAULT now() NOT NULL;

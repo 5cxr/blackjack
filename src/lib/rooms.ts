@@ -21,6 +21,20 @@ function generateCode(): string {
 
 export class RoomError extends Error {}
 
+/** Rooms with no game action in this long are treated as closed (not deleted — see the cron janitor). */
+const IDLE_MINUTES = 30;
+
+function isExpired(lastActiveAt: Date): boolean {
+  return Date.now() - lastActiveAt.getTime() > IDLE_MINUTES * 60_000;
+}
+
+async function touchRoom(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  roomId: string
+) {
+  await tx.update(rooms).set({ lastActiveAt: new Date() }).where(eq(rooms.id, roomId));
+}
+
 /** Credits every seated player's payout for the round now that the dealer's hand is final. */
 async function settleRound(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
@@ -74,9 +88,11 @@ export async function joinRoom(code: string, userId: string) {
       .for("update");
 
     if (!room) throw new RoomError("Room not found.");
+    if (isExpired(room.lastActiveAt)) throw new RoomError("This room closed due to inactivity.");
     if (room.status !== "waiting" && room.status !== "round_over") {
       throw new RoomError("Room already started.");
     }
+    await touchRoom(tx, room.id);
 
     const existingPlayers = await tx
       .select()
@@ -105,7 +121,7 @@ export async function joinRoom(code: string, userId: string) {
 
 export async function getRoomByCode(code: string) {
   const [room] = await db.select().from(rooms).where(eq(rooms.code, code));
-  if (!room) return null;
+  if (!room || isExpired(room.lastActiveAt)) return null;
 
   const players = await db
     .select({
@@ -143,6 +159,7 @@ export async function startRound(code: string, userId: string) {
   const result = await db.transaction(async (tx) => {
     const [room] = await tx.select().from(rooms).where(eq(rooms.code, code)).for("update");
     if (!room) throw new RoomError("Room not found.");
+    if (isExpired(room.lastActiveAt)) throw new RoomError("This room closed due to inactivity.");
     if (room.status !== "waiting" && room.status !== "round_over") {
       throw new RoomError("A round is already in progress.");
     }
@@ -154,7 +171,7 @@ export async function startRound(code: string, userId: string) {
 
     const [updatedRoom] = await tx
       .update(rooms)
-      .set({ status: "betting", currentTurnSeat: null, dealerHand: [] })
+      .set({ status: "betting", currentTurnSeat: null, dealerHand: [], lastActiveAt: new Date() })
       .where(eq(rooms.id, room.id))
       .returning();
 
@@ -178,7 +195,9 @@ export async function placeBet(code: string, userId: string, amount: number) {
   const result = await db.transaction(async (tx) => {
     const [room] = await tx.select().from(rooms).where(eq(rooms.code, code)).for("update");
     if (!room) throw new RoomError("Room not found.");
+    if (isExpired(room.lastActiveAt)) throw new RoomError("This room closed due to inactivity.");
     if (room.status !== "betting") throw new RoomError("Betting is not open right now.");
+    await touchRoom(tx, room.id);
 
     const [player] = await tx
       .select()
@@ -306,6 +325,7 @@ async function loadActingPlayer(
 ) {
   const [room] = await tx.select().from(rooms).where(eq(rooms.code, code)).for("update");
   if (!room) throw new RoomError("Room not found.");
+  if (isExpired(room.lastActiveAt)) throw new RoomError("This room closed due to inactivity.");
   if (room.status !== "playing") throw new RoomError("No player turn is active right now.");
 
   const [player] = await tx
@@ -316,6 +336,7 @@ async function loadActingPlayer(
   if (room.currentTurnSeat !== player.seat) throw new RoomError("It's not your turn.");
   if (player.status !== "active") throw new RoomError("You already finished this hand.");
 
+  await touchRoom(tx, room.id);
   return { room, player };
 }
 

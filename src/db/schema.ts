@@ -23,6 +23,10 @@ export const rooms = pgTable(
     dealerHand: jsonb("dealer_hand").$type<Card[]>().notNull().default([]),
     shoe: jsonb("shoe").$type<Card[]>().notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    // Bumped on every game action (join/bet/hit/stand/...), NOT on read-only
+    // polling -- otherwise an abandoned tab's poll loop would keep a room
+    // alive forever. Idle rooms are treated as gone; see IDLE_MINUTES.
+    lastActiveAt: timestamp("last_active_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("rooms_code_idx").on(table.code)]
 );

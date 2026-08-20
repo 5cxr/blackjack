@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { redisPub } from "./redis";
+import { getRedisPub } from "./redis";
 
 /**
  * Fixed-window rate limit via a plain INCR+EXPIRE — atomic enough for this
@@ -14,9 +14,10 @@ export async function checkRateLimit(
   limit: number,
   windowSeconds: number
 ): Promise<NextResponse | null> {
-  const count = await redisPub.incr(key);
+  const redis = getRedisPub();
+  const count = await redis.incr(key);
   if (count === 1) {
-    await redisPub.expire(key, windowSeconds);
+    await redis.expire(key, windowSeconds);
   }
   if (count > limit) {
     return NextResponse.json({ error: "Too many requests, slow down." }, { status: 429 });
