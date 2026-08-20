@@ -1,4 +1,5 @@
-import { pgTable, uuid, text, integer, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, integer, timestamp, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
+import type { Card } from "@/lib/cards";
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey(),
@@ -16,6 +17,9 @@ export const rooms = pgTable(
       .notNull()
       .references(() => users.id),
     status: text("status").notNull().default("waiting"), // waiting | in_progress | finished
+    currentTurnSeat: integer("current_turn_seat"),
+    dealerHand: jsonb("dealer_hand").$type<Card[]>().notNull().default([]),
+    shoe: jsonb("shoe").$type<Card[]>().notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("rooms_code_idx").on(table.code)]
@@ -32,6 +36,7 @@ export const roomPlayers = pgTable(
       .notNull()
       .references(() => users.id),
     seat: integer("seat").notNull(),
+    hand: jsonb("hand").$type<Card[]>().notNull().default([]),
     joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("room_players_room_seat_idx").on(table.roomId, table.seat)]
