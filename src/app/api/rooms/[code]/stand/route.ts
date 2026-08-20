@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { stand, RoomError } from "@/lib/rooms";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export async function POST(
   _req: NextRequest,
@@ -10,6 +11,9 @@ export async function POST(
   if (!session) {
     return NextResponse.json({ error: "Not signed in." }, { status: 401 });
   }
+
+  const limited = await checkRateLimit(`rl:stand:${session.userId}`, 30, 60);
+  if (limited) return limited;
 
   const { code } = await params;
 
