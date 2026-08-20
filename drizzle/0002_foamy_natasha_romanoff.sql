@@ -1,0 +1,1 @@
+ALTER TABLE "room_players" ADD COLUMN "bet" integer DEFAULT 0 NOT NULL;
