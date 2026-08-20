@@ -1,8 +1,9 @@
 import { db } from "@/db";
 import { rooms, roomPlayers, users } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
-import { createShoe, type Card } from "./cards";
+import { createShoe, handValue, type Card } from "./cards";
 import { nextTurnSeat } from "./turn-order";
+import type { PlayerHandStatus } from "@/db/schema";
 
 export const MAX_SEATS = 6;
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I
@@ -87,6 +88,7 @@ export async function getRoomByCode(code: string) {
       username: users.username,
       bet: roomPlayers.bet,
       hand: roomPlayers.hand,
+      status: roomPlayers.status,
       balance: users.balance,
     })
     .from(roomPlayers)
@@ -130,7 +132,7 @@ export async function startRound(code: string, userId: string) {
 
     await tx
       .update(roomPlayers)
-      .set({ bet: 0, hand: [] })
+      .set({ bet: 0, hand: [], status: "active" })
       .where(eq(roomPlayers.roomId, room.id));
 
     return updatedRoom;
@@ -186,21 +188,136 @@ export async function placeBet(code: string, userId: string, amount: number) {
         dealerHand.push(shoe[i++]);
       }
 
+      const statuses = new Map<string, PlayerHandStatus>(
+        sorted.map((p) => [p.id, handValue(hands.get(p.id)!).isBlackjack ? "blackjack" : "active"])
+      );
+
       for (const p of sorted) {
-        await tx.update(roomPlayers).set({ hand: hands.get(p.id) }).where(eq(roomPlayers.id, p.id));
+        await tx
+          .update(roomPlayers)
+          .set({ hand: hands.get(p.id), status: statuses.get(p.id) })
+          .where(eq(roomPlayers.id, p.id));
       }
+
+      // Players dealt a natural blackjack never get an active turn this
+      // round, so the fixed turn order is everyone else, in seat order.
+      const turnSeats = sorted.filter((p) => statuses.get(p.id) !== "blackjack").map((p) => p.seat);
+      const firstSeat = nextTurnSeat(turnSeats, null);
 
       await tx
         .update(rooms)
         .set({
-          status: "playing",
+          status: firstSeat === null ? "dealer_turn" : "playing",
           dealerHand,
           shoe: shoe.slice(i),
-          currentTurnSeat: nextTurnSeat(sorted.map((p) => p.seat), null),
+          currentTurnSeat: firstSeat,
         })
         .where(eq(rooms.id, room.id));
     }
 
     return { balance: updatedUser.balance, bet: amount, dealt: allBet };
+  });
+}
+
+/** Recomputes and persists whose turn is next, or hands off to the dealer if no one's left. */
+async function advanceTurn(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  roomId: string,
+  actingSeat: number
+) {
+  const allPlayers = await tx.select().from(roomPlayers).where(eq(roomPlayers.roomId, roomId));
+  const turnSeats = allPlayers.filter((p) => p.status !== "blackjack").map((p) => p.seat);
+  const next = nextTurnSeat(turnSeats, actingSeat);
+
+  await tx
+    .update(rooms)
+    .set(
+      next === null
+        ? { status: "dealer_turn", currentTurnSeat: null }
+        : { currentTurnSeat: next }
+    )
+    .where(eq(rooms.id, roomId));
+}
+
+async function loadActingPlayer(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  code: string,
+  userId: string
+) {
+  const [room] = await tx.select().from(rooms).where(eq(rooms.code, code)).for("update");
+  if (!room) throw new RoomError("Room not found.");
+  if (room.status !== "playing") throw new RoomError("No player turn is active right now.");
+
+  const [player] = await tx
+    .select()
+    .from(roomPlayers)
+    .where(and(eq(roomPlayers.roomId, room.id), eq(roomPlayers.userId, userId)));
+  if (!player) throw new RoomError("You are not seated at this table.");
+  if (room.currentTurnSeat !== player.seat) throw new RoomError("It's not your turn.");
+  if (player.status !== "active") throw new RoomError("You already finished this hand.");
+
+  return { room, player };
+}
+
+export async function hit(code: string, userId: string) {
+  return db.transaction(async (tx) => {
+    const { room, player } = await loadActingPlayer(tx, code, userId);
+    if (room.shoe.length === 0) throw new RoomError("Shoe exhausted, cannot deal another card.");
+
+    const card = room.shoe[0];
+    const hand = [...player.hand, card];
+    const value = handValue(hand);
+    const status = value.isBust ? "bust" : value.total === 21 ? "stood" : "active";
+
+    await tx.update(roomPlayers).set({ hand, status }).where(eq(roomPlayers.id, player.id));
+    await tx.update(rooms).set({ shoe: room.shoe.slice(1) }).where(eq(rooms.id, room.id));
+
+    if (status !== "active") {
+      await advanceTurn(tx, room.id, player.seat);
+    }
+
+    return { hand, status };
+  });
+}
+
+export async function stand(code: string, userId: string) {
+  return db.transaction(async (tx) => {
+    const { room, player } = await loadActingPlayer(tx, code, userId);
+
+    await tx.update(roomPlayers).set({ status: "stood" }).where(eq(roomPlayers.id, player.id));
+    await advanceTurn(tx, room.id, player.seat);
+
+    return { hand: player.hand, status: "stood" as const };
+  });
+}
+
+export async function doubleDown(code: string, userId: string) {
+  return db.transaction(async (tx) => {
+    const { room, player } = await loadActingPlayer(tx, code, userId);
+    if (player.hand.length !== 2) {
+      throw new RoomError("Double down is only allowed as your first action.");
+    }
+    if (room.shoe.length === 0) throw new RoomError("Shoe exhausted, cannot deal another card.");
+
+    const [user] = await tx.select().from(users).where(eq(users.id, userId)).for("update");
+    if (!user || user.balance < player.bet) {
+      throw new RoomError("Insufficient balance to double down.");
+    }
+
+    const card = room.shoe[0];
+    const hand = [...player.hand, card];
+    const value = handValue(hand);
+    const status = value.isBust ? "bust" : "stood";
+
+    await tx.update(users).set({ balance: user.balance - player.bet }).where(eq(users.id, userId));
+    await tx
+      .update(roomPlayers)
+      .set({ hand, status, bet: player.bet * 2 })
+      .where(eq(roomPlayers.id, player.id));
+    await tx.update(rooms).set({ shoe: room.shoe.slice(1) }).where(eq(rooms.id, room.id));
+
+    await advanceTurn(tx, room.id, player.seat);
+
+    return { hand, status, bet: player.bet * 2, balance: user.balance - player.bet };
   });
 }

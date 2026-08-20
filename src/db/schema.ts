@@ -1,6 +1,8 @@
 import { pgTable, uuid, text, integer, timestamp, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
 import type { Card } from "@/lib/cards";
 
+export type PlayerHandStatus = "active" | "stood" | "bust" | "blackjack";
+
 export const users = pgTable("users", {
   id: uuid("id").primaryKey(),
   username: text("username").notNull(),
@@ -16,7 +18,7 @@ export const rooms = pgTable(
     hostUserId: uuid("host_user_id")
       .notNull()
       .references(() => users.id),
-    status: text("status").notNull().default("waiting"), // waiting | betting | playing
+    status: text("status").notNull().default("waiting"), // waiting | betting | playing | dealer_turn
     currentTurnSeat: integer("current_turn_seat"),
     dealerHand: jsonb("dealer_hand").$type<Card[]>().notNull().default([]),
     shoe: jsonb("shoe").$type<Card[]>().notNull().default([]),
@@ -38,6 +40,7 @@ export const roomPlayers = pgTable(
     seat: integer("seat").notNull(),
     hand: jsonb("hand").$type<Card[]>().notNull().default([]),
     bet: integer("bet").notNull().default(0),
+    status: text("status").$type<PlayerHandStatus>().notNull().default("active"),
     joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("room_players_room_seat_idx").on(table.roomId, table.seat)]

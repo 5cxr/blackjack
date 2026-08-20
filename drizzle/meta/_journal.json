@@ -22,6 +22,13 @@
       "when": 1787211371709,
       "tag": "0002_foamy_natasha_romanoff",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1787211839457,
+      "tag": "0003_glorious_vance_astro",
+      "breakpoints": true
     }
   ]
 }

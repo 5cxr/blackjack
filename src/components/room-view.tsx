@@ -10,7 +10,15 @@ interface Player {
   bet: number;
   balance: number;
   hand: Card[];
+  status: "active" | "stood" | "bust" | "blackjack";
 }
+
+const STATUS_LABEL: Record<Player["status"], string> = {
+  active: "",
+  stood: "stood",
+  bust: "bust",
+  blackjack: "blackjack!",
+};
 
 function Hand({ cards, label }: { cards: Card[]; label?: string }) {
   if (cards.length === 0) return null;
@@ -31,6 +39,7 @@ export default function RoomView({
   code,
   status: initialStatus,
   dealerHand: initialDealerHand,
+  currentTurnSeat: initialCurrentTurnSeat,
   players: initialPlayers,
   maxSeats,
   selfUserId,
@@ -38,12 +47,14 @@ export default function RoomView({
   code: string;
   status: string;
   dealerHand: Card[];
+  currentTurnSeat: number | null;
   players: Player[];
   maxSeats: number;
   selfUserId: string;
 }) {
   const [status, setStatus] = useState(initialStatus);
   const [dealerHand, setDealerHand] = useState(initialDealerHand);
+  const [currentTurnSeat, setCurrentTurnSeat] = useState(initialCurrentTurnSeat);
   const [players, setPlayers] = useState(initialPlayers);
   const [betInput, setBetInput] = useState("25");
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +66,7 @@ export default function RoomView({
     const data = await res.json();
     setStatus(data.room.status);
     setDealerHand(data.room.dealerHand);
+    setCurrentTurnSeat(data.room.currentTurnSeat);
     setPlayers(data.players);
   }
 
@@ -98,6 +110,21 @@ export default function RoomView({
     await refresh();
   }
 
+  async function handleAction(action: "hit" | "stand" | "double") {
+    setError(null);
+    setBusy(true);
+    const res = await fetch(`/api/rooms/${code}/${action}`, { method: "POST" });
+    setBusy(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      setError(data?.error ?? "Action failed.");
+      return;
+    }
+    await refresh();
+  }
+
+  const isMyTurn = status === "playing" && self?.seat === currentTurnSeat;
+
   const seats = Array.from({ length: maxSeats }, (_, seat) =>
     players.find((p) => p.seat === seat)
   );
@@ -116,7 +143,7 @@ export default function RoomView({
         )}
       </div>
 
-      {(status === "playing" || dealerHand.length > 0) && (
+      {dealerHand.length > 0 && (
         <div className="flex flex-col items-center gap-1">
           <span className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Dealer</span>
           <div className="flex items-center gap-1.5 text-sm">
@@ -124,6 +151,11 @@ export default function RoomView({
               {dealerHand.map(formatCard).join(" ")}
               {status === "playing" && dealerHand.length === 1 ? " 🂠" : ""}
             </span>
+            {dealerHand.length > 1 && (
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                ({handValue(dealerHand).total})
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -140,7 +172,11 @@ export default function RoomView({
           >
             {player ? (
               <>
-                <span className="font-medium text-black dark:text-zinc-50">
+                <span
+                  className={`font-medium text-black dark:text-zinc-50 ${
+                    seat === currentTurnSeat ? "underline decoration-2 underline-offset-2" : ""
+                  }`}
+                >
                   {player.username}
                   {player.userId === selfUserId ? " (you)" : ""}
                 </span>
@@ -148,6 +184,11 @@ export default function RoomView({
                   <span className="text-xs text-zinc-500 dark:text-zinc-400">Bet: {player.bet}</span>
                 )}
                 <Hand cards={player.hand} />
+                {STATUS_LABEL[player.status] && (
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {STATUS_LABEL[player.status]}
+                  </span>
+                )}
               </>
             ) : (
               "Empty seat"
@@ -192,9 +233,41 @@ export default function RoomView({
         </p>
       )}
 
-      {status === "playing" && (
+      {status === "playing" && isMyTurn && self && (
+        <div className="flex w-full max-w-xs gap-2">
+          <button
+            onClick={() => handleAction("hit")}
+            disabled={busy}
+            className="h-12 flex-1 rounded-lg bg-foreground font-medium text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
+          >
+            Hit
+          </button>
+          <button
+            onClick={() => handleAction("stand")}
+            disabled={busy}
+            className="h-12 flex-1 rounded-lg border border-black/[.08] font-medium transition-colors hover:bg-black/[.04] disabled:opacity-50 dark:border-white/[.145] dark:hover:bg-[#1a1a1a]"
+          >
+            Stand
+          </button>
+          {self.hand.length === 2 && self.balance >= self.bet && (
+            <button
+              onClick={() => handleAction("double")}
+              disabled={busy}
+              className="h-12 flex-1 rounded-lg border border-black/[.08] font-medium transition-colors hover:bg-black/[.04] disabled:opacity-50 dark:border-white/[.145] dark:hover:bg-[#1a1a1a]"
+            >
+              Double
+            </button>
+          )}
+        </div>
+      )}
+
+      {status === "playing" && !isMyTurn && (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">Waiting for other players...</p>
+      )}
+
+      {status === "dealer_turn" && (
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Cards are dealt. Player actions (hit/stand) are coming next.
+          All players done. Dealer plays next.
         </p>
       )}
 
