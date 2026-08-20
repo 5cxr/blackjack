@@ -1,7 +1,7 @@
 import { db } from "@/db";
 import { rooms, roomPlayers, users } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
-import { createShoe, handValue, type Card } from "./cards";
+import { createShoe, handValue, playDealerHand, type Card } from "./cards";
 import { nextTurnSeat } from "./turn-order";
 import type { PlayerHandStatus } from "@/db/schema";
 
@@ -203,23 +203,38 @@ export async function placeBet(code: string, userId: string, amount: number) {
       // round, so the fixed turn order is everyone else, in seat order.
       const turnSeats = sorted.filter((p) => statuses.get(p.id) !== "blackjack").map((p) => p.seat);
       const firstSeat = nextTurnSeat(turnSeats, null);
+      const remainingShoe = shoe.slice(i);
 
-      await tx
-        .update(rooms)
-        .set({
-          status: firstSeat === null ? "dealer_turn" : "playing",
-          dealerHand,
-          shoe: shoe.slice(i),
-          currentTurnSeat: firstSeat,
-        })
-        .where(eq(rooms.id, room.id));
+      if (firstSeat === null) {
+        // Everyone was dealt a natural blackjack — no player turns at all,
+        // dealer resolves immediately.
+        const resolved = playDealerHand(dealerHand, remainingShoe);
+        await tx
+          .update(rooms)
+          .set({
+            status: "round_over",
+            dealerHand: resolved.dealerHand,
+            shoe: resolved.shoe,
+            currentTurnSeat: null,
+          })
+          .where(eq(rooms.id, room.id));
+      } else {
+        await tx
+          .update(rooms)
+          .set({ status: "playing", dealerHand, shoe: remainingShoe, currentTurnSeat: firstSeat })
+          .where(eq(rooms.id, room.id));
+      }
     }
 
     return { balance: updatedUser.balance, bet: amount, dealt: allBet };
   });
 }
 
-/** Recomputes and persists whose turn is next, or hands off to the dealer if no one's left. */
+/**
+ * Recomputes whose turn is next. Once the last seated player finishes, the
+ * dealer isn't waited on for input — its hand resolves immediately, in the
+ * same transaction as the action that ended the round.
+ */
 async function advanceTurn(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   roomId: string,
@@ -229,13 +244,22 @@ async function advanceTurn(
   const turnSeats = allPlayers.filter((p) => p.status !== "blackjack").map((p) => p.seat);
   const next = nextTurnSeat(turnSeats, actingSeat);
 
+  if (next !== null) {
+    await tx.update(rooms).set({ currentTurnSeat: next }).where(eq(rooms.id, roomId));
+    return;
+  }
+
+  const [room] = await tx.select().from(rooms).where(eq(rooms.id, roomId));
+  const resolved = playDealerHand(room.dealerHand, room.shoe);
+
   await tx
     .update(rooms)
-    .set(
-      next === null
-        ? { status: "dealer_turn", currentTurnSeat: null }
-        : { currentTurnSeat: next }
-    )
+    .set({
+      status: "round_over",
+      dealerHand: resolved.dealerHand,
+      shoe: resolved.shoe,
+      currentTurnSeat: null,
+    })
     .where(eq(rooms.id, roomId));
 }
 

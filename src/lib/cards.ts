@@ -54,6 +54,25 @@ export function cardValue(card: Card): number {
   return Number(rank);
 }
 
+/**
+ * Dealer draws until 17+, standing on soft 17 (S17) — the more
+ * player-favorable of the two common house conventions.
+ */
+export function playDealerHand(
+  startingHand: Card[],
+  shoe: Card[]
+): { dealerHand: Card[]; shoe: Card[] } {
+  let hand = [...startingHand];
+  let remaining = [...shoe];
+
+  while (handValue(hand).total < 17 && remaining.length > 0) {
+    hand = [...hand, remaining[0]];
+    remaining = remaining.slice(1);
+  }
+
+  return { dealerHand: hand, shoe: remaining };
+}
+
 export interface HandValue {
   total: number;
   soft: boolean; // true if an ace is counted as 11

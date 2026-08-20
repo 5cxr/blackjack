@@ -265,9 +265,10 @@ export default function RoomView({
         <p className="text-sm text-zinc-500 dark:text-zinc-400">Waiting for other players...</p>
       )}
 
-      {status === "dealer_turn" && (
+      {status === "round_over" && (
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          All players done. Dealer plays next.
+          Round over. Dealer {handValue(dealerHand).isBust ? "busts" : `has ${handValue(dealerHand).total}`}.
+          Payouts are coming next.
         </p>
       )}
 
