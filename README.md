@@ -1,55 +1,24 @@
 # Blackjack
 
-Multiplayer blackjack, virtual currency only. See `CONTEXT.md` for the full design and build-order writeup.
+Multiplayer blackjack, virtual currency only. Players join a shared table by
+room code, each gets their own hand against one dealer, turns go in sequence
+around the table — like a real casino table, not a pile of solo games.
 
-Live: https://blackjack-nine-gamma.vercel.app
+**Live: https://blackjack-nine-gamma.vercel.app**
+
+Everyone starts with 500 chips. No real money, no accounts beyond picking a
+username. Standard rules: blackjack pays 3:2, dealer stands on soft 17, hit /
+stand / double down supported.
+
+Built with Next.js, Postgres (Drizzle ORM), and Redis-backed WebSockets for
+real-time table sync. Full design notes and build log in `CONTEXT.md`.
 
 ## Local setup
 
 ```bash
 npm install
-docker compose up -d       # local Postgres + Redis
-cp .env.local.example .env.local
-# fill in SESSION_SECRET (any random string) — DATABASE_URL/REDIS_URL
-# already match the docker-compose defaults
+docker compose up -d              # local Postgres + Redis
+cp .env.local.example .env.local  # fill in SESSION_SECRET
 npm run db:migrate
+npx vercel dev                    # not `npm run dev` — see CONTEXT.md
 ```
-
-Realtime updates run over WebSockets on a Vercel Function (`experimental_upgradeWebSocket`),
-which **`next dev` does not emulate** — the upgrade request never reaches the route handler.
-Use the Vercel CLI instead:
-
-```bash
-npx vercel dev
-```
-
-`next dev` still works for everything else (plain pages/API routes); it just won't push
-live table updates — the client falls back to a 15s poll in that case.
-
-## Database
-
-Drizzle ORM. After changing `src/db/schema.ts`:
-
-```bash
-npm run db:generate   # writes a migration file
-npm run db:migrate    # applies it
-```
-
-`npm run db:studio` opens Drizzle Studio against the local DB.
-
-## Deploying
-
-Provisioned via Vercel Marketplace: `vercel integration add neon` and
-`vercel integration add upstash/upstash-kv`, both connected to Production/Preview/Development
-and injecting `DATABASE_URL` / `REDIS_URL` directly — no code changes needed, both are
-standard wire-protocol connection strings the existing `pg`/`ioredis` clients already speak.
-
-`SESSION_SECRET` is set separately per environment (`vercel env add SESSION_SECRET production`) —
-it isn't provisioned by an integration.
-
-```bash
-vercel deploy --prod
-```
-
-GitHub push-to-deploy isn't wired up (the CLI's auto-connect failed against this repo);
-deploys are manual via the command above until that's fixed in the dashboard's Git settings.
