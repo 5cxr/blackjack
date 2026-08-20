@@ -16,7 +16,7 @@ Web-based blackjack, virtual currency only. Players join rooms ("tables"), each 
 - DB: Postgres via Drizzle ORM — local via docker-compose for dev, swap `DATABASE_URL` to Neon (Vercel Marketplace) at deploy time. Tables: users, rooms, room_players.
 - Realtime: WebSockets via Vercel Functions (Fluid Compute), using `@vercel/functions`'s `experimental_upgradeWebSocket`. Requires `vercel dev` for local testing — plain `next dev` does not emulate the WS upgrade at all (confirmed empirically: the upgrade request never reaches the route handler under `next dev`).
 - Cross-instance fanout: Redis pub/sub (`ioredis`) — local via docker-compose, swap for a managed Redis (Marketplace) at deploy time. Required because a Vercel Function gives no instance affinity: two players in the same room can have their WS connections pinned to different instances, so an in-memory broadcast map alone can't reach both. Each instance keeps a local `Map<roomCode, Set<WebSocket>>` for dispatch to its own sockets; a mutation publishes a lightweight "update" signal to `room:{code}`, and every instance subscribed to that channel forwards it to its local sockets, which then refetch full state over the existing masked REST endpoint. A 15s poll runs alongside the socket as a safety net (WS down / silently dropped without a close event).
-- Deploy target: Vercel
+- Deploy target: Vercel — live at https://blackjack-nine-gamma.vercel.app (manual `vercel deploy --prod`; GitHub push-to-deploy not wired up, see README)
 
 ## Core features / build order (all done)
 1. Username + session (cookie-based persistent id) — HMAC-signed httpOnly cookie, no DB dependency for the cookie itself

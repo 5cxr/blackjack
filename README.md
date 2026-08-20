@@ -2,6 +2,8 @@
 
 Multiplayer blackjack, virtual currency only. See `CONTEXT.md` for the full design and build-order writeup.
 
+Live: https://blackjack-nine-gamma.vercel.app
+
 ## Local setup
 
 ```bash
@@ -37,6 +39,17 @@ npm run db:migrate    # applies it
 
 ## Deploying
 
-Swap `DATABASE_URL` for a Neon connection string and `REDIS_URL` for a managed Redis
-(both available via the Vercel Marketplace) — no code changes needed, both are standard
-wire-protocol clients.
+Provisioned via Vercel Marketplace: `vercel integration add neon` and
+`vercel integration add upstash/upstash-kv`, both connected to Production/Preview/Development
+and injecting `DATABASE_URL` / `REDIS_URL` directly — no code changes needed, both are
+standard wire-protocol connection strings the existing `pg`/`ioredis` clients already speak.
+
+`SESSION_SECRET` is set separately per environment (`vercel env add SESSION_SECRET production`) —
+it isn't provisioned by an integration.
+
+```bash
+vercel deploy --prod
+```
+
+GitHub push-to-deploy isn't wired up (the CLI's auto-connect failed against this repo);
+deploys are manual via the command above until that's fixed in the dashboard's Git settings.
