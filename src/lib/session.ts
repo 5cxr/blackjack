@@ -1,5 +1,7 @@
 import { cookies } from "next/headers";
 import { createHmac, randomUUID, timingSafeEqual } from "crypto";
+import { db } from "@/db";
+import { users } from "@/db/schema";
 
 const COOKIE_NAME = "bj_session";
 const MAX_AGE_SECONDS = 60 * 60 * 24 * 365; // 1 year
@@ -57,6 +59,11 @@ export async function getSession(): Promise<Session | null> {
 export async function createSession(username: string): Promise<Session> {
   const existing = await getSession();
   const session: Session = { userId: existing?.userId ?? randomUUID(), username };
+
+  await db
+    .insert(users)
+    .values({ id: session.userId, username })
+    .onConflictDoUpdate({ target: users.id, set: { username } });
 
   const store = await cookies();
   store.set(COOKIE_NAME, encode(session), {
