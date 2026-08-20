@@ -16,7 +16,7 @@ export const rooms = pgTable(
     hostUserId: uuid("host_user_id")
       .notNull()
       .references(() => users.id),
-    status: text("status").notNull().default("waiting"), // waiting | betting | in_progress | finished
+    status: text("status").notNull().default("waiting"), // waiting | betting | playing
     currentTurnSeat: integer("current_turn_seat"),
     dealerHand: jsonb("dealer_hand").$type<Card[]>().notNull().default([]),
     shoe: jsonb("shoe").$type<Card[]>().notNull().default([]),

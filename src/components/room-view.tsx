@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { formatCard, handValue, type Card } from "@/lib/cards";
 
 interface Player {
   seat: number;
@@ -8,22 +9,41 @@ interface Player {
   username: string;
   bet: number;
   balance: number;
+  hand: Card[];
+}
+
+function Hand({ cards, label }: { cards: Card[]; label?: string }) {
+  if (cards.length === 0) return null;
+  const value = handValue(cards);
+  return (
+    <div className="flex items-center gap-1.5 text-sm">
+      <span className="font-mono tracking-wide text-black dark:text-zinc-50">
+        {cards.map(formatCard).join(" ")}
+      </span>
+      <span className="text-xs text-zinc-500 dark:text-zinc-400">
+        ({value.isBust ? "bust" : value.total}){label}
+      </span>
+    </div>
+  );
 }
 
 export default function RoomView({
   code,
   status: initialStatus,
+  dealerHand: initialDealerHand,
   players: initialPlayers,
   maxSeats,
   selfUserId,
 }: {
   code: string;
   status: string;
+  dealerHand: Card[];
   players: Player[];
   maxSeats: number;
   selfUserId: string;
 }) {
   const [status, setStatus] = useState(initialStatus);
+  const [dealerHand, setDealerHand] = useState(initialDealerHand);
   const [players, setPlayers] = useState(initialPlayers);
   const [betInput, setBetInput] = useState("25");
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +54,7 @@ export default function RoomView({
     if (!res.ok) return;
     const data = await res.json();
     setStatus(data.room.status);
+    setDealerHand(data.room.dealerHand);
     setPlayers(data.players);
   }
 
@@ -95,11 +116,23 @@ export default function RoomView({
         )}
       </div>
 
+      {(status === "playing" || dealerHand.length > 0) && (
+        <div className="flex flex-col items-center gap-1">
+          <span className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Dealer</span>
+          <div className="flex items-center gap-1.5 text-sm">
+            <span className="font-mono tracking-wide text-black dark:text-zinc-50">
+              {dealerHand.map(formatCard).join(" ")}
+              {status === "playing" && dealerHand.length === 1 ? " 🂠" : ""}
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="grid w-full max-w-lg grid-cols-3 gap-3">
         {seats.map((player, seat) => (
           <div
             key={seat}
-            className={`flex h-20 flex-col items-center justify-center rounded-lg border text-sm ${
+            className={`flex h-24 flex-col items-center justify-center gap-1 rounded-lg border p-2 text-sm ${
               player
                 ? "border-black/[.08] bg-white dark:border-white/[.145] dark:bg-zinc-900"
                 : "border-dashed border-black/[.08] text-zinc-400 dark:border-white/[.145]"
@@ -114,6 +147,7 @@ export default function RoomView({
                 {player.bet > 0 && (
                   <span className="text-xs text-zinc-500 dark:text-zinc-400">Bet: {player.bet}</span>
                 )}
+                <Hand cards={player.hand} />
               </>
             ) : (
               "Empty seat"
@@ -155,6 +189,12 @@ export default function RoomView({
       {status === "betting" && self && self.bet > 0 && (
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
           Bet placed, waiting on other players...
+        </p>
+      )}
+
+      {status === "playing" && (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          Cards are dealt. Player actions (hit/stand) are coming next.
         </p>
       )}
 

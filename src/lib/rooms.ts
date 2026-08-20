@@ -1,6 +1,8 @@
 import { db } from "@/db";
 import { rooms, roomPlayers, users } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
+import { createShoe, type Card } from "./cards";
+import { nextTurnSeat } from "./turn-order";
 
 export const MAX_SEATS = 6;
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I
@@ -91,7 +93,20 @@ export async function getRoomByCode(code: string) {
     .innerJoin(users, eq(users.id, roomPlayers.userId))
     .where(eq(roomPlayers.roomId, room.id));
 
-  return { room, players: players.sort((a, b) => a.seat - b.seat) };
+  // Hole card stays hidden from every client until the dealer's turn
+  // resolves the round; shoe order is never sent to clients at all.
+  return {
+    room: {
+      id: room.id,
+      code: room.code,
+      hostUserId: room.hostUserId,
+      status: room.status,
+      currentTurnSeat: room.currentTurnSeat,
+      dealerHand: room.status === "playing" ? room.dealerHand.slice(0, 1) : room.dealerHand,
+      createdAt: room.createdAt,
+    },
+    players: players.sort((a, b) => a.seat - b.seat),
+  };
 }
 
 const MIN_BET = 1;
@@ -152,6 +167,40 @@ export async function placeBet(code: string, userId: string, amount: number) {
 
     await tx.update(roomPlayers).set({ bet: amount }).where(eq(roomPlayers.id, player.id));
 
-    return { balance: updatedUser.balance, bet: amount };
+    const allPlayers = await tx.select().from(roomPlayers).where(eq(roomPlayers.roomId, room.id));
+    const allBet = allPlayers.every((p) => p.bet > 0);
+
+    if (allBet) {
+      const sorted = [...allPlayers].sort((a, b) => a.seat - b.seat);
+      const shoe = createShoe();
+      let i = 0;
+      const hands = new Map(sorted.map((p) => [p.id, [] as Card[]]));
+      const dealerHand: Card[] = [];
+
+      // Deal like a real table: one card round-robin to each player then the
+      // dealer, twice — not all of a player's cards at once.
+      for (let round = 0; round < 2; round++) {
+        for (const p of sorted) {
+          hands.get(p.id)!.push(shoe[i++]);
+        }
+        dealerHand.push(shoe[i++]);
+      }
+
+      for (const p of sorted) {
+        await tx.update(roomPlayers).set({ hand: hands.get(p.id) }).where(eq(roomPlayers.id, p.id));
+      }
+
+      await tx
+        .update(rooms)
+        .set({
+          status: "playing",
+          dealerHand,
+          shoe: shoe.slice(i),
+          currentTurnSeat: nextTurnSeat(sorted.map((p) => p.seat), null),
+        })
+        .where(eq(rooms.id, room.id));
+    }
+
+    return { balance: updatedUser.balance, bet: amount, dealt: allBet };
   });
 }

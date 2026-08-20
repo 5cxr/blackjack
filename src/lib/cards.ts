@@ -37,6 +37,16 @@ export function rankOf(card: Card): Rank {
   return card.slice(0, -1) as Rank;
 }
 
+export function suitOf(card: Card): Suit {
+  return card.slice(-1) as Suit;
+}
+
+const SUIT_SYMBOLS: Record<Suit, string> = { S: "♠", H: "♥", D: "♦", C: "♣" };
+
+export function formatCard(card: Card): string {
+  return `${rankOf(card)}${SUIT_SYMBOLS[suitOf(card)]}`;
+}
+
 export function cardValue(card: Card): number {
   const rank = rankOf(card);
   if (rank === "A") return 11;

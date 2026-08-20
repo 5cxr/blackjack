@@ -19,6 +19,7 @@ export default async function RoomPage({
     <RoomView
       code={result.room.code}
       status={result.room.status}
+      dealerHand={result.room.dealerHand}
       players={result.players}
       maxSeats={MAX_SEATS}
       selfUserId={session.userId}
