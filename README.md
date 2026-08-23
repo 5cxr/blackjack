@@ -13,6 +13,9 @@ stand / double down supported.
 Built with Next.js, Postgres (Drizzle ORM), and Redis-backed WebSockets for
 real-time table sync. Full design notes and build log in `CONTEXT.md`.
 
+Mutating endpoints are rate limited. Idle rooms expire and get swept by a
+daily cleanup cron.
+
 ## Local setup
 
 ```bash
