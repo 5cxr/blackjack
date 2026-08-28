@@ -11,7 +11,7 @@ interface Player {
   bet: number;
   balance: number;
   hand: Card[];
-  status: "active" | "stood" | "bust" | "blackjack";
+  status: "active" | "stood" | "bust" | "blackjack" | "spectating";
 }
 
 const STATUS_LABEL: Record<Player["status"], string> = {
@@ -19,9 +19,11 @@ const STATUS_LABEL: Record<Player["status"], string> = {
   stood: "stood",
   bust: "bust",
   blackjack: "blackjack!",
+  spectating: "sitting out",
 };
 
 function outcomeLabel(player: Player, dealerHand: Card[]): string {
+  if (player.status === "spectating") return "sitting out";
   const payout = computePayout(player.status, player.hand, dealerHand, player.bet);
   if (payout === 0) return "lost";
   if (payout === player.bet) return "push";
@@ -149,6 +151,19 @@ export default function RoomView({
     await refresh();
   }
 
+  async function handleRebuy() {
+    setError(null);
+    setBusy(true);
+    const res = await fetch(`/api/rooms/${code}/rebuy`, { method: "POST" });
+    setBusy(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      setError(data?.error ?? "Could not claim free chips.");
+      return;
+    }
+    await refresh();
+  }
+
   async function handleAction(action: "hit" | "stand" | "double") {
     setError(null);
     setBusy(true);
@@ -179,6 +194,15 @@ export default function RoomView({
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
             Balance: <span className="font-medium text-black dark:text-zinc-50">{self.balance}</span>
           </p>
+        )}
+        {self && self.balance === 0 && (status === "waiting" || status === "round_over") && (
+          <button
+            onClick={handleRebuy}
+            disabled={busy}
+            className="rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
+          >
+            Get free chips
+          </button>
         )}
       </div>
 
@@ -252,7 +276,13 @@ export default function RoomView({
         </button>
       )}
 
-      {status === "betting" && self && self.bet === 0 && (
+      {status === "betting" && self && self.balance === 0 && (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          Sitting out this round — you&apos;re out of chips.
+        </p>
+      )}
+
+      {status === "betting" && self && self.bet === 0 && self.balance > 0 && (
         <form onSubmit={handleBet} className="flex w-full max-w-xs gap-2">
           <input
             type="number"

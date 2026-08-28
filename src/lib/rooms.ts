@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { rooms, roomPlayers, users } from "@/db/schema";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { createShoe, handValue, playDealerHand, type Card } from "./cards";
 import { nextTurnSeat } from "./turn-order";
 import { computePayout } from "./payouts";
@@ -154,6 +154,8 @@ export async function getRoomByCode(code: string) {
 }
 
 const MIN_BET = 1;
+const REBUY_AMOUNT = 500;
+const REBUY_COOLDOWN_MS = 60 * 60_000; // 1 hour
 
 export async function startRound(code: string, userId: string) {
   const result = await db.transaction(async (tx) => {
@@ -220,10 +222,31 @@ export async function placeBet(code: string, userId: string, amount: number) {
     await tx.update(roomPlayers).set({ bet: amount }).where(eq(roomPlayers.id, player.id));
 
     const allPlayers = await tx.select().from(roomPlayers).where(eq(roomPlayers.roomId, room.id));
-    const allBet = allPlayers.every((p) => p.bet > 0);
+    const balances = await tx
+      .select({ id: users.id, balance: users.balance })
+      .from(users)
+      .where(
+        inArray(
+          users.id,
+          allPlayers.map((p) => p.userId)
+        )
+      );
+    const balanceOf = new Map(balances.map((u) => [u.id, u.balance]));
 
-    if (allBet) {
-      const sorted = [...allPlayers].sort((a, b) => a.seat - b.seat);
+    // A bankrupt seat (balance 0) can never place a bet, so it doesn't block
+    // the table — it sits out the round instead. Requiring at least one real
+    // bet keeps a table of all-bankrupt seats from "dealing" a round nobody
+    // can play.
+    const allBet = allPlayers.every((p) => p.bet > 0 || balanceOf.get(p.userId) === 0);
+    const hasABettor = allPlayers.some((p) => p.bet > 0);
+
+    if (allBet && hasABettor) {
+      const spectators = allPlayers.filter((p) => p.bet === 0);
+      for (const s of spectators) {
+        await tx.update(roomPlayers).set({ status: "spectating" }).where(eq(roomPlayers.id, s.id));
+      }
+
+      const sorted = allPlayers.filter((p) => p.bet > 0).sort((a, b) => a.seat - b.seat);
       const shoe = createShoe();
       let i = 0;
       const hands = new Map(sorted.map((p) => [p.id, [] as Card[]]));
@@ -277,7 +300,7 @@ export async function placeBet(code: string, userId: string, amount: number) {
       }
     }
 
-    return { balance: updatedUser.balance, bet: amount, dealt: allBet };
+    return { balance: updatedUser.balance, bet: amount, dealt: allBet && hasABettor };
   });
 
   await publishRoomUpdate(code);
@@ -295,7 +318,9 @@ async function advanceTurn(
   actingSeat: number
 ) {
   const allPlayers = await tx.select().from(roomPlayers).where(eq(roomPlayers.roomId, roomId));
-  const turnSeats = allPlayers.filter((p) => p.status !== "blackjack").map((p) => p.seat);
+  const turnSeats = allPlayers
+    .filter((p) => p.status !== "blackjack" && p.status !== "spectating")
+    .map((p) => p.seat);
   const next = nextTurnSeat(turnSeats, actingSeat);
 
   if (next !== null) {
@@ -406,6 +431,48 @@ export async function doubleDown(code: string, userId: string) {
     await advanceTurn(tx, room.id, player.seat);
 
     return { hand, status, bet: player.bet * 2, balance: user.balance - player.bet };
+  });
+
+  await publishRoomUpdate(code);
+  return result;
+}
+
+/** Bankrupt-only rebuy, gated by a cooldown so it isn't infinite money. */
+export async function claimFreeChips(code: string, userId: string) {
+  const result = await db.transaction(async (tx) => {
+    const [player] = await tx
+      .select({ id: roomPlayers.id, roomStatus: rooms.status })
+      .from(roomPlayers)
+      .innerJoin(rooms, eq(rooms.id, roomPlayers.roomId))
+      .where(and(eq(rooms.code, code), eq(roomPlayers.userId, userId)));
+    if (!player) throw new RoomError("You are not seated at this table.");
+    // Balance hits 0 the instant an all-in bet is placed, before the round
+    // resolves — claiming here mid-round would reset balance to a flat 500
+    // while that bet is still live, stacking free chips on top of whatever
+    // it pays out. Only allow a claim between rounds.
+    if (player.roomStatus === "betting" || player.roomStatus === "playing") {
+      throw new RoomError("Can't claim free chips mid-round, wait for it to finish.");
+    }
+
+    const [user] = await tx.select().from(users).where(eq(users.id, userId)).for("update");
+    if (!user) throw new RoomError("User not found.");
+    if (user.balance > 0) throw new RoomError("You still have chips.");
+
+    if (user.lastFreeChipsAt) {
+      const elapsed = Date.now() - user.lastFreeChipsAt.getTime();
+      if (elapsed < REBUY_COOLDOWN_MS) {
+        const waitMin = Math.ceil((REBUY_COOLDOWN_MS - elapsed) / 60_000);
+        throw new RoomError(`Free chips already claimed. Try again in ${waitMin} min.`);
+      }
+    }
+
+    const [updated] = await tx
+      .update(users)
+      .set({ balance: REBUY_AMOUNT, lastFreeChipsAt: new Date() })
+      .where(eq(users.id, userId))
+      .returning();
+
+    return { balance: updated.balance };
   });
 
   await publishRoomUpdate(code);

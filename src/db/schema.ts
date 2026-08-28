@@ -1,12 +1,14 @@
 import { pgTable, uuid, text, integer, timestamp, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
 import type { Card } from "@/lib/cards";
 
-export type PlayerHandStatus = "active" | "stood" | "bust" | "blackjack";
+export type PlayerHandStatus = "active" | "stood" | "bust" | "blackjack" | "spectating";
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey(),
   username: text("username").notNull(),
   balance: integer("balance").notNull().default(500),
+  // Null until the first claim. Gates the rebuy cooldown in claimFreeChips().
+  lastFreeChipsAt: timestamp("last_free_chips_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

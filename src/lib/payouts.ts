@@ -12,7 +12,7 @@ export function computePayout(
   dealerHand: Card[],
   bet: number
 ): number {
-  if (playerStatus === "bust") return 0;
+  if (playerStatus === "bust" || playerStatus === "spectating") return 0;
 
   const dealer = handValue(dealerHand);
 
