@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSession, getSession } from "@/lib/session";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { normalizeAvatar } from "@/lib/avatar";
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
 
@@ -25,6 +26,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const session = await createSession(username);
+  const session = await createSession(username, normalizeAvatar(body));
   return NextResponse.json({ session });
 }

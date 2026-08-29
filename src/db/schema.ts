@@ -7,6 +7,10 @@ export const users = pgTable("users", {
   id: uuid("id").primaryKey(),
   username: text("username").notNull(),
   balance: integer("balance").notNull().default(500),
+  // Indices into the fixed option lists in src/lib/avatar.ts.
+  avatarColor: integer("avatar_color").notNull().default(0),
+  avatarEyes: integer("avatar_eyes").notNull().default(0),
+  avatarFace: integer("avatar_face").notNull().default(0),
   // Null until the first claim. Gates the rebuy cooldown in claimFreeChips().
   lastFreeChipsAt: timestamp("last_free_chips_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -22,6 +26,10 @@ export const rooms = pgTable(
       .references(() => users.id),
     status: text("status").notNull().default("waiting"), // waiting | betting | playing | round_over
     currentTurnSeat: integer("current_turn_seat"),
+    // When the current seat's turn began — drives the client countdown ring
+    // and gates /timeout's server-side auto-stand. Null whenever no player
+    // turn is active.
+    turnStartedAt: timestamp("turn_started_at", { withTimezone: true }),
     dealerHand: jsonb("dealer_hand").$type<Card[]>().notNull().default([]),
     shoe: jsonb("shoe").$type<Card[]>().notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

@@ -5,6 +5,7 @@ import { createShoe, handValue, playDealerHand, type Card } from "./cards";
 import { nextTurnSeat } from "./turn-order";
 import { computePayout } from "./payouts";
 import { publishRoomUpdate } from "./room-events";
+import { TURN_SECONDS } from "./turn-timer";
 import type { PlayerHandStatus } from "@/db/schema";
 
 export const MAX_SEATS = 6;
@@ -132,6 +133,9 @@ export async function getRoomByCode(code: string) {
       hand: roomPlayers.hand,
       status: roomPlayers.status,
       balance: users.balance,
+      avatarColor: users.avatarColor,
+      avatarEyes: users.avatarEyes,
+      avatarFace: users.avatarFace,
     })
     .from(roomPlayers)
     .innerJoin(users, eq(users.id, roomPlayers.userId))
@@ -146,6 +150,7 @@ export async function getRoomByCode(code: string) {
       hostUserId: room.hostUserId,
       status: room.status,
       currentTurnSeat: room.currentTurnSeat,
+      turnStartedAt: room.turnStartedAt,
       dealerHand: room.status === "playing" ? room.dealerHand.slice(0, 1) : room.dealerHand,
       createdAt: room.createdAt,
     },
@@ -173,7 +178,13 @@ export async function startRound(code: string, userId: string) {
 
     const [updatedRoom] = await tx
       .update(rooms)
-      .set({ status: "betting", currentTurnSeat: null, dealerHand: [], lastActiveAt: new Date() })
+      .set({
+        status: "betting",
+        currentTurnSeat: null,
+        turnStartedAt: null,
+        dealerHand: [],
+        lastActiveAt: new Date(),
+      })
       .where(eq(rooms.id, room.id))
       .returning();
 
@@ -290,12 +301,19 @@ export async function placeBet(code: string, userId: string, amount: number) {
             dealerHand: resolved.dealerHand,
             shoe: resolved.shoe,
             currentTurnSeat: null,
+            turnStartedAt: null,
           })
           .where(eq(rooms.id, room.id));
       } else {
         await tx
           .update(rooms)
-          .set({ status: "playing", dealerHand, shoe: remainingShoe, currentTurnSeat: firstSeat })
+          .set({
+            status: "playing",
+            dealerHand,
+            shoe: remainingShoe,
+            currentTurnSeat: firstSeat,
+            turnStartedAt: new Date(),
+          })
           .where(eq(rooms.id, room.id));
       }
     }
@@ -324,7 +342,10 @@ async function advanceTurn(
   const next = nextTurnSeat(turnSeats, actingSeat);
 
   if (next !== null) {
-    await tx.update(rooms).set({ currentTurnSeat: next }).where(eq(rooms.id, roomId));
+    await tx
+      .update(rooms)
+      .set({ currentTurnSeat: next, turnStartedAt: new Date() })
+      .where(eq(rooms.id, roomId));
     return;
   }
 
@@ -339,6 +360,7 @@ async function advanceTurn(
       dealerHand: resolved.dealerHand,
       shoe: resolved.shoe,
       currentTurnSeat: null,
+      turnStartedAt: null,
     })
     .where(eq(rooms.id, roomId));
 }
@@ -431,6 +453,45 @@ export async function doubleDown(code: string, userId: string) {
     await advanceTurn(tx, room.id, player.seat);
 
     return { hand, status, bet: player.bet * 2, balance: user.balance - player.bet };
+  });
+
+  await publishRoomUpdate(code);
+  return result;
+}
+
+/**
+ * Auto-stands whoever's turn it is once their clock has genuinely run out.
+ * Any seated player's client may call this (not just the acting player's —
+ * their tab may be gone), but the server is the one deciding elapsed time,
+ * so a caller can't force it early.
+ */
+export async function autoStandOnTimeout(code: string, callerId: string) {
+  const result = await db.transaction(async (tx) => {
+    const [room] = await tx.select().from(rooms).where(eq(rooms.code, code)).for("update");
+    if (!room) throw new RoomError("Room not found.");
+    if (room.status !== "playing" || room.currentTurnSeat === null || !room.turnStartedAt) {
+      throw new RoomError("No player turn is active right now.");
+    }
+
+    const elapsed = Date.now() - room.turnStartedAt.getTime();
+    if (elapsed < TURN_SECONDS * 1000) {
+      throw new RoomError("Turn has not timed out yet.");
+    }
+
+    const players = await tx.select().from(roomPlayers).where(eq(roomPlayers.roomId, room.id));
+    if (!players.some((p) => p.userId === callerId)) {
+      throw new RoomError("You are not seated at this table.");
+    }
+
+    const player = players.find((p) => p.seat === room.currentTurnSeat);
+    if (!player || player.status !== "active") {
+      throw new RoomError("No player turn is active right now.");
+    }
+
+    await tx.update(roomPlayers).set({ status: "stood" }).where(eq(roomPlayers.id, player.id));
+    await advanceTurn(tx, room.id, player.seat);
+
+    return { seat: player.seat };
   });
 
   await publishRoomUpdate(code);

@@ -2,10 +2,13 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import AvatarPicker from "./avatar-picker";
+import { DEFAULT_AVATAR, type AvatarConfig } from "@/lib/avatar";
 
 export default function UsernameForm() {
   const router = useRouter();
   const [username, setUsername] = useState("");
+  const [avatar, setAvatar] = useState<AvatarConfig>(DEFAULT_AVATAR);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -17,7 +20,12 @@ export default function UsernameForm() {
     const res = await fetch("/api/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username }),
+      body: JSON.stringify({
+        username,
+        avatarColor: avatar.color,
+        avatarEyes: avatar.eyes,
+        avatarFace: avatar.face,
+      }),
     });
 
     setSubmitting(false);
@@ -32,7 +40,8 @@ export default function UsernameForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex w-full flex-col gap-3">
+    <form onSubmit={handleSubmit} className="flex w-full flex-col gap-4">
+      <AvatarPicker value={avatar} onChange={setAvatar} />
       <input
         type="text"
         value={username}

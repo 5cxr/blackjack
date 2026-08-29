@@ -1,7 +1,9 @@
 import { cookies } from "next/headers";
 import { createHmac, randomUUID, timingSafeEqual } from "crypto";
+import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { users } from "@/db/schema";
+import type { AvatarConfig } from "@/lib/avatar";
 
 const COOKIE_NAME = "bj_session";
 const MAX_AGE_SECONDS = 60 * 60 * 24 * 365; // 1 year
@@ -56,14 +58,23 @@ export async function getSession(): Promise<Session | null> {
   return decode(token);
 }
 
-export async function createSession(username: string): Promise<Session> {
+export async function createSession(username: string, avatar: AvatarConfig): Promise<Session> {
   const existing = await getSession();
   const session: Session = { userId: existing?.userId ?? randomUUID(), username };
 
   await db
     .insert(users)
-    .values({ id: session.userId, username })
-    .onConflictDoUpdate({ target: users.id, set: { username } });
+    .values({
+      id: session.userId,
+      username,
+      avatarColor: avatar.color,
+      avatarEyes: avatar.eyes,
+      avatarFace: avatar.face,
+    })
+    .onConflictDoUpdate({
+      target: users.id,
+      set: { username, avatarColor: avatar.color, avatarEyes: avatar.eyes, avatarFace: avatar.face },
+    });
 
   const store = await cookies();
   store.set(COOKIE_NAME, encode(session), {
@@ -75,4 +86,20 @@ export async function createSession(username: string): Promise<Session> {
   });
 
   return session;
+}
+
+export async function getUserAvatar(userId: string): Promise<AvatarConfig> {
+  const [user] = await db
+    .select({ avatarColor: users.avatarColor, avatarEyes: users.avatarEyes, avatarFace: users.avatarFace })
+    .from(users)
+    .where(eq(users.id, userId));
+  if (!user) return { color: 0, eyes: 0, face: 0 };
+  return { color: user.avatarColor, eyes: user.avatarEyes, face: user.avatarFace };
+}
+
+export async function updateUserAvatar(userId: string, avatar: AvatarConfig): Promise<void> {
+  await db
+    .update(users)
+    .set({ avatarColor: avatar.color, avatarEyes: avatar.eyes, avatarFace: avatar.face })
+    .where(eq(users.id, userId));
 }
