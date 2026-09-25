@@ -3,12 +3,15 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import AvatarPicker from "./avatar-picker";
-import { DEFAULT_AVATAR, type AvatarConfig } from "@/lib/avatar";
+import { BrassButton, Eyebrow } from "./ui";
+import { type AvatarConfig } from "@/lib/avatar";
 
-export default function UsernameForm() {
+export default function UsernameForm({ initialAvatar }: { initialAvatar: AvatarConfig }) {
   const router = useRouter();
   const [username, setUsername] = useState("");
-  const [avatar, setAvatar] = useState<AvatarConfig>(DEFAULT_AVATAR);
+  // Rolled on the server and handed down, so the first cat you see is a
+  // surprise without the client re-rolling it and breaking hydration.
+  const [avatar, setAvatar] = useState<AvatarConfig>(initialAvatar);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -40,24 +43,39 @@ export default function UsernameForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex w-full flex-col gap-4">
-      <AvatarPicker value={avatar} onChange={setAvatar} />
-      <input
-        type="text"
-        value={username}
-        onChange={(e) => setUsername(e.target.value)}
-        placeholder="Pick a username"
-        autoFocus
-        className="h-12 w-full rounded-lg border border-black/[.08] bg-white px-4 text-base outline-none focus:border-black/30 dark:border-white/[.145] dark:bg-zinc-900 dark:focus:border-white/40"
-      />
-      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-      <button
+    <form onSubmit={handleSubmit} className="flex w-full flex-col gap-5">
+      <div className="animate-rise">
+        <AvatarPicker value={avatar} onChange={setAvatar} />
+      </div>
+
+      <div className="animate-rise flex flex-col gap-2" style={{ animationDelay: "90ms" }}>
+        <Eyebrow className="pl-1">What do they call you</Eyebrow>
+        <input
+          type="text"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          placeholder="name at the door"
+          autoFocus
+          maxLength={20}
+          className="h-14 w-full rounded-xl border border-cream/15 bg-ink/70 px-5 font-display text-lg text-cream placeholder:font-sans placeholder:text-sm placeholder:tracking-[0.12em] placeholder:text-cream/25 outline-none transition-colors focus:border-brass/70 focus:shadow-[0_0_24px_-10px_rgba(242,220,155,0.8)]"
+        />
+        <p className="pl-1 text-[10px] tracking-[0.12em] text-cream-dim">
+          3–20 characters · letters, numbers, underscores
+        </p>
+      </div>
+
+      {error && (
+        <p className="animate-banner text-center text-xs uppercase tracking-[0.18em] text-ruby">{error}</p>
+      )}
+
+      <BrassButton
         type="submit"
-        disabled={submitting || username.length === 0}
-        className="h-12 w-full rounded-lg bg-foreground font-medium text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
+        disabled={submitting || username.length < 3}
+        className="animate-rise w-full"
+        style={{ animationDelay: "160ms" }}
       >
-        {submitting ? "Joining..." : "Continue"}
-      </button>
+        {submitting ? "Checking the list…" : "Step inside"}
+      </BrassButton>
     </form>
   );
 }

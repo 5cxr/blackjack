@@ -1,157 +1,33 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { handValue, type Card } from "@/lib/cards";
 import { computePayout } from "@/lib/payouts";
 import { TURN_SECONDS } from "@/lib/turn-timer";
 import type { AvatarConfig } from "@/lib/avatar";
 import CatAvatar from "./cat-avatar";
 import AvatarPicker from "./avatar-picker";
-import { PlayingCard, CardBack } from "./playing-card";
+import BetRack from "./bet-rack";
+import TableSeat, { EmptySeat, type SeatPlayer } from "./table-seat";
+import { CardBack, CardFan } from "./playing-card";
+import { BrassButton, Eyebrow, GhostButton, Panel } from "./ui";
 
-interface Player {
-  seat: number;
-  userId: string;
-  username: string;
-  bet: number;
-  balance: number;
-  hand: Card[];
-  status: "active" | "stood" | "bust" | "blackjack" | "spectating";
-  avatarColor: number;
-  avatarEyes: number;
-  avatarFace: number;
-}
-
-const STATUS_LABEL: Record<Player["status"], string> = {
-  active: "",
-  stood: "stood",
-  bust: "bust",
-  blackjack: "blackjack!",
-  spectating: "sitting out",
-};
-
-// Fixed arc positions around the oval felt, indexed by seat number so a
-// player always sits in the same spot relative to everyone else.
-const SEAT_LAYOUT: { left: string; top: string }[] = [
-  { left: "6%", top: "68%" },
-  { left: "23%", top: "90%" },
-  { left: "42%", top: "98%" },
-  { left: "58%", top: "98%" },
-  { left: "77%", top: "90%" },
-  { left: "94%", top: "68%" },
+/**
+ * Seats ride the lower arc of the ellipse at 88% of its radius: points are
+ * (50 + 44·cos θ, 50 + 44·sin θ) for θ fanning from 152° round to 28°, which
+ * keeps every hand on felt instead of out over the rail.
+ */
+const SEAT_LAYOUT = [
+  { left: "11%", top: "71%" },
+  { left: "23%", top: "85%" },
+  { left: "40.5%", top: "93%" },
+  { left: "59.5%", top: "93%" },
+  { left: "77%", top: "85%" },
+  { left: "89%", top: "71%" },
 ];
 
-function outcomeLabel(player: Player, dealerHand: Card[]): string {
-  if (player.status === "spectating") return "sitting out";
-  const payout = computePayout(player.status, player.hand, dealerHand, player.bet);
-  if (payout === 0) return "lost";
-  if (payout === player.bet) return "push";
-  return "won";
-}
-
-function Hand({ cards }: { cards: Card[] }) {
-  if (cards.length === 0) return null;
-  const value = handValue(cards);
-  return (
-    <div className="flex flex-col items-center gap-0.5">
-      <div className="flex">
-        {cards.map((card, i) => (
-          <div key={i} className={i > 0 ? "-ml-3" : ""}>
-            <PlayingCard card={card} />
-          </div>
-        ))}
-      </div>
-      <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
-        {value.isBust ? "bust" : value.total}
-      </span>
-    </div>
-  );
-}
-
-/** Countdown ring: full green circle at turn start, draining clockwise to nothing at TURN_SECONDS. */
-function TimerRing({ turnStartedAt, tick }: { turnStartedAt: Date; tick: number }) {
-  const elapsedMs = tick - turnStartedAt.getTime();
-  const remaining = Math.max(0, 1 - elapsedMs / (TURN_SECONDS * 1000));
-  const r = 46;
-  const circumference = 2 * Math.PI * r;
-
-  return (
-    <svg
-      viewBox="0 0 100 100"
-      className="pointer-events-none absolute inset-0 h-full w-full -rotate-90"
-    >
-      <circle cx="50" cy="50" r={r} fill="none" stroke="currentColor" strokeWidth={4} className="text-black/10 dark:text-white/10" />
-      <circle
-        cx="50"
-        cy="50"
-        r={r}
-        fill="none"
-        stroke="#22c55e"
-        strokeWidth={4}
-        strokeLinecap="round"
-        strokeDasharray={circumference}
-        strokeDashoffset={circumference * (1 - remaining)}
-        style={{ transition: "stroke-dashoffset 200ms linear" }}
-      />
-    </svg>
-  );
-}
-
-function SeatCard({
-  player,
-  isSelf,
-  isTurn,
-  turnStartedAt,
-  tick,
-  status,
-  dealerHand,
-}: {
-  player: Player;
-  isSelf: boolean;
-  isTurn: boolean;
-  turnStartedAt: Date | null;
-  tick: number;
-  status: string;
-  dealerHand: Card[];
-}) {
-  return (
-    <div
-      className={`flex w-24 flex-col items-center gap-1 rounded-xl border p-1.5 text-center transition-colors sm:w-28 ${
-        isTurn
-          ? "border-green-500/60 bg-white shadow-md dark:bg-zinc-900"
-          : "border-black/[.08] bg-white/90 dark:border-white/[.145] dark:bg-zinc-900/90"
-      }`}
-    >
-      <div className="relative h-14 w-14">
-        {isTurn && turnStartedAt && <TimerRing turnStartedAt={turnStartedAt} tick={tick} />}
-        <div className="absolute inset-1.5 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-          <CatAvatar color={player.avatarColor} eyes={player.avatarEyes} face={player.avatarFace} size={44} />
-        </div>
-      </div>
-
-      <span className="w-full truncate text-xs font-medium text-black dark:text-zinc-50">
-        {player.username}
-        {isSelf ? " (you)" : ""}
-      </span>
-
-      {player.bet > 0 && (
-        <span className="text-[10px] text-zinc-500 dark:text-zinc-400">Bet {player.bet}</span>
-      )}
-
-      <Hand cards={player.hand} />
-
-      {status === "round_over" ? (
-        <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-          {outcomeLabel(player, dealerHand)}
-        </span>
-      ) : (
-        STATUS_LABEL[player.status] && (
-          <span className="text-[10px] text-zinc-500 dark:text-zinc-400">{STATUS_LABEL[player.status]}</span>
-        )
-      )}
-    </div>
-  );
-}
+type Toast = { message: string; tone: "error" | "info" } | null;
 
 export default function RoomView({
   code,
@@ -168,7 +44,7 @@ export default function RoomView({
   dealerHand: Card[];
   currentTurnSeat: number | null;
   turnStartedAt: Date | string | null;
-  players: Player[];
+  players: SeatPlayer[];
   maxSeats: number;
   selfUserId: string;
 }) {
@@ -179,13 +55,31 @@ export default function RoomView({
     initialTurnStartedAt ? new Date(initialTurnStartedAt) : null
   );
   const [players, setPlayers] = useState(initialPlayers);
-  const [betInput, setBetInput] = useState("25");
-  const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<Toast>(null);
   const [busy, setBusy] = useState(false);
   const [editingAvatar, setEditingAvatar] = useState(false);
-  const [tick, setTick] = useState(() => Date.now());
+  const [showRules, setShowRules] = useState(false);
+  // Starts at 0 rather than Date.now() so the server and client agree on the
+  // first paint of the countdown ring; the interval below takes over instantly.
+  const [tick, setTick] = useState(0);
 
-  async function refresh() {
+  const self = players.find((p) => p.userId === selfUserId);
+  const isMyTurn = status === "playing" && self?.seat === currentTurnSeat;
+  const canEditAvatar = status === "waiting" && !!self;
+  const canDouble = !!self && self.hand.length === 2 && self.balance >= self.bet;
+  const turnPlayer = players.find((p) => p.seat === currentTurnSeat);
+
+  function say(message: string, tone: "error" | "info" = "error") {
+    setToast({ message, tone });
+  }
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3600);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const refresh = useCallback(async () => {
     const res = await fetch(`/api/rooms/${code}`);
     if (!res.ok) return;
     const data = await res.json();
@@ -194,7 +88,7 @@ export default function RoomView({
     setCurrentTurnSeat(data.room.currentTurnSeat);
     setTurnStartedAt(data.room.turnStartedAt ? new Date(data.room.turnStartedAt) : null);
     setPlayers(data.players);
-  }
+  }, [code]);
 
   useEffect(() => {
     let socket: WebSocket | null = null;
@@ -230,8 +124,7 @@ export default function RoomView({
       if (reconnectTimer) clearTimeout(reconnectTimer);
       clearInterval(fallback);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [code]);
+  }, [code, refresh]);
 
   // Ticks the countdown ring and, once the acting seat's clock expires, nudges
   // the server to auto-stand it. Any seated client can send this nudge (the
@@ -253,79 +146,56 @@ export default function RoomView({
     }, 200);
 
     return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, currentTurnSeat, turnStartedAt, code]);
+  }, [status, currentTurnSeat, turnStartedAt, code, refresh]);
 
-  const self = players.find((p) => p.userId === selfUserId);
+  const post = useCallback(
+    async (path: string, body?: unknown, fallbackMessage = "That didn't work.") => {
+      setBusy(true);
+      const res = await fetch(`/api/rooms/${code}${path}`, {
+        method: "POST",
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      setBusy(false);
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        say(data?.error ?? fallbackMessage);
+        return false;
+      }
+      await refresh();
+      return true;
+    },
+    [code, refresh]
+  );
 
-  async function handleStartRound() {
-    setError(null);
-    setBusy(true);
-    const res = await fetch(`/api/rooms/${code}/start-round`, { method: "POST" });
-    setBusy(false);
-    if (!res.ok) {
-      const data = await res.json().catch(() => null);
-      setError(data?.error ?? "Could not start round.");
-      return;
+  const act = useCallback(
+    (action: "hit" | "stand" | "double") => post(`/${action}`, undefined, "Action failed."),
+    [post]
+  );
+
+  // Table shortcuts: the same three keys a dealer would watch your hands for.
+  useEffect(() => {
+    if (!isMyTurn || busy) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.target instanceof HTMLElement && ["INPUT", "TEXTAREA"].includes(e.target.tagName)) return;
+      const key = e.key.toLowerCase();
+      if (key === "h") act("hit");
+      else if (key === "s") act("stand");
+      else if (key === "d" && canDouble) act("double");
     }
-    await refresh();
-  }
-
-  async function handleBet(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    const amount = Number(betInput);
-    setBusy(true);
-    const res = await fetch(`/api/rooms/${code}/bet`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ amount }),
-    });
-    setBusy(false);
-    if (!res.ok) {
-      const data = await res.json().catch(() => null);
-      setError(data?.error ?? "Could not place bet.");
-      return;
-    }
-    await refresh();
-  }
-
-  async function handleRebuy() {
-    setError(null);
-    setBusy(true);
-    const res = await fetch(`/api/rooms/${code}/rebuy`, { method: "POST" });
-    setBusy(false);
-    if (!res.ok) {
-      const data = await res.json().catch(() => null);
-      setError(data?.error ?? "Could not claim free chips.");
-      return;
-    }
-    await refresh();
-  }
-
-  async function handleAction(action: "hit" | "stand" | "double") {
-    setError(null);
-    setBusy(true);
-    const res = await fetch(`/api/rooms/${code}/${action}`, { method: "POST" });
-    setBusy(false);
-    if (!res.ok) {
-      const data = await res.json().catch(() => null);
-      setError(data?.error ?? "Action failed.");
-      return;
-    }
-    await refresh();
-  }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isMyTurn, busy, canDouble, act]);
 
   async function handleAvatarChange(next: AvatarConfig) {
-    if (self) {
-      setPlayers((prev) =>
-        prev.map((p) =>
-          p.userId === selfUserId
-            ? { ...p, avatarColor: next.color, avatarEyes: next.eyes, avatarFace: next.face }
-            : p
-        )
-      );
-    }
+    setPlayers((prev) =>
+      prev.map((p) =>
+        p.userId === selfUserId
+          ? { ...p, avatarColor: next.color, avatarEyes: next.eyes, avatarFace: next.face }
+          : p
+      )
+    );
     await fetch("/api/avatar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -333,197 +203,323 @@ export default function RoomView({
     });
   }
 
-  const isMyTurn = status === "playing" && self?.seat === currentTurnSeat;
-  const canEditAvatar = status === "waiting" && !!self;
+  async function copyCode() {
+    try {
+      await navigator.clipboard.writeText(code);
+      say("Table code copied", "info");
+    } catch {
+      say("Couldn't copy — the code is " + code, "info");
+    }
+  }
 
-  const seats = Array.from({ length: maxSeats }, (_, seat) =>
-    players.find((p) => p.seat === seat)
-  );
+  const seats = Array.from({ length: maxSeats }, (_, seat) => players.find((p) => p.seat === seat));
+  const dealerValue = dealerHand.length > 1 ? handValue(dealerHand) : null;
+  const secondsLeft =
+    tick > 0 && turnStartedAt && status === "playing"
+      ? Math.min(TURN_SECONDS, Math.max(0, Math.ceil(TURN_SECONDS - (tick - turnStartedAt.getTime()) / 1000)))
+      : null;
+
+  const settled =
+    status === "round_over" && self && self.hand.length > 0 && self.status !== "spectating"
+      ? computePayout(self.status, self.hand, dealerHand, self.bet) - self.bet
+      : null;
 
   return (
-    <div className="flex flex-1 flex-col items-center gap-6 bg-zinc-50 px-4 py-10 dark:bg-black">
-      <div className="flex flex-col items-center gap-2">
-        <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Table {code}</h1>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Share this code so others can join. Status: {status}
-        </p>
-        {self && (
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Balance: <span className="font-medium text-black dark:text-zinc-50">{self.balance}</span>
-          </p>
-        )}
-        <div className="flex gap-2">
-          {self && self.balance === 0 && self.bet === 0 && (
+    <div className="relative flex flex-1 flex-col overflow-hidden">
+      <div className="rays pointer-events-none absolute inset-x-0 top-0 h-[55vh] opacity-70" aria-hidden />
+      <div className="vignette pointer-events-none absolute inset-0" aria-hidden />
+
+      <header className="relative z-20 flex items-center justify-between gap-2 px-3 py-2 sm:gap-3 sm:px-6 sm:py-3">
+        <Link
+          href="/"
+          className="hidden font-display text-xs tracking-[0.18em] text-brass-lit/80 transition-colors hover:text-brass-lit sm:block sm:text-sm"
+        >
+          Whisker Jack
+        </Link>
+
+        <button
+          type="button"
+          onClick={copyCode}
+          title="Copy table code"
+          className="flex items-center gap-2 rounded-full border border-brass/40 bg-ink/70 px-3 py-1.5 transition-colors hover:border-brass sm:px-4"
+        >
+          <Eyebrow>table</Eyebrow>
+          <span className="font-display text-sm tracking-[0.16em] text-cream sm:tracking-[0.28em]">{code}</span>
+          <svg viewBox="0 0 24 24" width={12} height={12} fill="none" stroke="currentColor" strokeWidth={2} className="text-brass/70">
+            <rect x="9" y="9" width="11" height="11" rx="2" />
+            <path d="M 5 15 V 5 a 2 2 0 0 1 2 -2 h 10" />
+          </svg>
+        </button>
+
+        <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+          <button
+            type="button"
+            onClick={() => setShowRules((v) => !v)}
+            aria-label="House rules"
+            className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs transition-colors ${
+              showRules ? "border-brass-lit text-brass-lit" : "border-cream/20 text-cream-dim hover:border-brass/60"
+            }`}
+          >
+            ?
+          </button>
+          <div className="text-right">
+            <Eyebrow>chips</Eyebrow>
+            <p className="font-mono text-sm font-semibold tabular-nums leading-tight text-brass-lit">
+              {self?.balance ?? 0}
+            </p>
+          </div>
+          {canEditAvatar && self && (
             <button
-              onClick={handleRebuy}
-              disabled={busy}
-              className="rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
-            >
-              Get free chips
-            </button>
-          )}
-          {canEditAvatar && (
-            <button
+              type="button"
               onClick={() => setEditingAvatar((v) => !v)}
-              className="rounded-lg border border-black/[.08] px-4 py-2 text-sm font-medium transition-colors hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a]"
+              aria-label="Change your cat"
+              className={`h-11 w-11 shrink-0 overflow-hidden rounded-full border bg-ink transition-colors ${
+                editingAvatar ? "border-brass-lit" : "border-brass/40 hover:border-brass"
+              }`}
             >
-              {editingAvatar ? "Done" : "Edit avatar"}
+              <CatAvatar color={self.avatarColor} eyes={self.avatarEyes} face={self.avatarFace} size={44} />
             </button>
           )}
         </div>
-        {editingAvatar && self && (
-          <AvatarPicker
-            value={{ color: self.avatarColor, eyes: self.avatarEyes, face: self.avatarFace }}
-            onChange={handleAvatarChange}
-          />
-        )}
-      </div>
+      </header>
 
-      <div
-        className="relative mb-14 w-full max-w-3xl border-4 border-emerald-900/40 bg-[radial-gradient(ellipse_at_center,_#0f6b45,_#0a4a30)] shadow-inner"
-        style={{ aspectRatio: "2 / 1.3", borderRadius: "50%" }}
-      >
-        <div className="absolute left-1/2 top-[14%] flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1">
-          <span className="text-[10px] font-medium uppercase tracking-wide text-emerald-100/70">Dealer</span>
-          {dealerHand.length > 0 ? (
-            <div className="flex flex-col items-center gap-1">
-              <div className="flex">
-                {dealerHand.map((card, i) => (
-                  <div key={i} className={i > 0 ? "-ml-4" : ""}>
-                    <PlayingCard card={card} size="md" />
-                  </div>
-                ))}
-                {status === "playing" && dealerHand.length === 1 && (
-                  <div className="-ml-4">
+      {editingAvatar && self && (
+        <div className="absolute right-4 top-16 z-30 w-72 animate-banner sm:right-6">
+          <Panel className="p-3">
+            <AvatarPicker
+              value={{ color: self.avatarColor, eyes: self.avatarEyes, face: self.avatarFace }}
+              onChange={handleAvatarChange}
+            />
+          </Panel>
+        </div>
+      )}
+
+      {showRules && (
+        <div className="absolute left-1/2 top-16 z-30 w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 animate-banner">
+          <Panel className="p-5 text-left">
+            <div className="flex items-start justify-between gap-4">
+              <h2 className="font-display text-sm tracking-[0.18em] text-brass-lit">House rules</h2>
+              <button
+                type="button"
+                onClick={() => setShowRules(false)}
+                className="text-xs text-cream-dim hover:text-cream"
+                aria-label="Close house rules"
+              >
+                ✕
+              </button>
+            </div>
+            <ul className="mt-3 space-y-1.5 text-[13px] leading-relaxed text-cream-dim">
+              <li>Beat the dealer&apos;s hand without going over 21.</li>
+              <li>Blackjack pays 3 to 2. A win pays even money, a tie returns your bet.</li>
+              <li>Dealer draws to 16 and stands on all 17s. Six decks, shuffled every hand.</li>
+              <li>Double doubles your bet for exactly one more card, then your hand is done.</li>
+              <li>
+                You get {TURN_SECONDS} seconds to act — run out and the house stands for you.
+              </li>
+              <li>Out of chips? Sit out the round and claim free chips between hands.</li>
+            </ul>
+            <p className="mt-3 text-[10px] uppercase tracking-[0.22em] text-cream/40">
+              Keys · H hit · S stand · D double
+            </p>
+          </Panel>
+        </div>
+      )}
+
+      <main className="relative z-10 flex flex-1 items-center justify-center overflow-hidden px-2">
+        {/* pb leaves room for the seat cards that hang below the felt's rim */}
+        <div className="table-zoom w-[1000px] shrink-0 pb-16">
+          <div className="rounded-[50%] bg-gradient-to-b from-[#e7cd8a] via-[#9a7a1c] to-[#3f3009] p-[7px] shadow-[0_50px_90px_-40px_rgba(0,0,0,0.95)]">
+            <div
+              className="felt-surface relative rounded-[50%] border border-black/50 shadow-[inset_0_2px_30px_rgba(0,0,0,0.55)]"
+              style={{ aspectRatio: "2 / 1.16" }}
+            >
+              <div className="absolute inset-[14px] rounded-[50%] border border-brass/20" aria-hidden />
+
+              {/* dealer */}
+              <div className="absolute left-1/2 top-[17%] flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2">
+                <Eyebrow className="text-brass/70">Dealer</Eyebrow>
+                <div className="flex min-h-[104px] items-end gap-2">
+                  {dealerHand.length > 0 ? (
+                    <CardFan
+                      cards={dealerHand}
+                      size="lg"
+                      hiddenCount={status === "playing" && dealerHand.length === 1 ? 1 : 0}
+                    />
+                  ) : (
+                    <span className="pb-6 text-[11px] uppercase tracking-[0.3em] text-cream/25">
+                      {status === "betting" ? "taking bets" : "no hand yet"}
+                    </span>
+                  )}
+                  {dealerValue && (
+                    <span className="mb-2 rounded-full border border-brass/40 bg-ink/80 px-2 py-0.5 font-mono text-xs tabular-nums text-brass-lit">
+                      {dealerValue.isBust ? "bust" : dealerValue.total}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="pointer-events-none absolute right-[21%] top-[26%] rotate-[9deg] opacity-90">
+                {[0, 1, 2, 3].map((i) => (
+                  <div key={i} className="absolute" style={{ left: i * 3, top: i * -3 }}>
                     <CardBack size="md" />
                   </div>
-                )}
+                ))}
               </div>
-              {dealerHand.length > 1 && (
-                <span className="text-xs text-emerald-100/80">{handValue(dealerHand).total}</span>
-              )}
-            </div>
-          ) : (
-            <span className="text-xs text-emerald-100/50">waiting to deal</span>
-          )}
-        </div>
 
-        {seats.map((player, seat) => {
-          const pos = SEAT_LAYOUT[seat];
-          return (
-            <div
-              key={seat}
-              className="absolute -translate-x-1/2 -translate-y-1/2"
-              style={{ left: pos.left, top: pos.top }}
-            >
-              {player ? (
-                <SeatCard
-                  player={player}
-                  isSelf={player.userId === selfUserId}
-                  isTurn={seat === currentTurnSeat}
-                  turnStartedAt={turnStartedAt}
-                  tick={tick}
-                  status={status}
-                  dealerHand={dealerHand}
-                />
-              ) : (
-                <div className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-dashed border-white/20 text-xs text-white/40 sm:h-16 sm:w-16">
-                  {seat + 1}
+              {/* house rules, painted on the felt */}
+              <div className="pointer-events-none absolute left-1/2 top-[52%] w-full -translate-x-1/2 -translate-y-1/2 text-center">
+                <p className="font-display text-[15px] tracking-[0.3em] text-brass/30">
+                  BLACKJACK PAYS 3 TO 2
+                </p>
+                <p className="mt-1 text-[10px] uppercase tracking-[0.26em] text-cream/15">
+                  dealer must draw to 16 · stand on all 17s
+                </p>
+              </div>
+
+              {settled !== null && (
+                <div className="pointer-events-none absolute left-1/2 top-[40%] z-20 -translate-x-1/2 -translate-y-1/2 animate-banner">
+                  <div className="rounded-full border border-brass/30 bg-ink/70 px-6 py-2 text-center backdrop-blur-sm">
+                    <p
+                      className={`font-mono text-2xl font-semibold tabular-nums ${
+                        settled > 0 ? "text-jade" : settled < 0 ? "text-ruby" : "text-cream"
+                      }`}
+                    >
+                      {settled > 0 ? `+${settled}` : settled < 0 ? settled : "push"}
+                    </p>
+                    <p className="text-[9px] uppercase tracking-[0.3em] text-cream-dim">
+                      {settled > 0 ? "paid out" : settled < 0 ? "to the house" : "stand-off"}
+                    </p>
+                  </div>
                 </div>
               )}
+
+              {seats.map((player, seat) => (
+                <div
+                  key={seat}
+                  className="absolute -translate-x-1/2 -translate-y-[62%]"
+                  style={{ left: SEAT_LAYOUT[seat].left, top: SEAT_LAYOUT[seat].top }}
+                >
+                  {player ? (
+                    <TableSeat
+                      player={player}
+                      isSelf={player.userId === selfUserId}
+                      isTurn={seat === currentTurnSeat}
+                      turnStartedAt={turnStartedAt}
+                      tick={tick}
+                      roomStatus={status}
+                      dealerHand={dealerHand}
+                    />
+                  ) : (
+                    <EmptySeat seat={seat} />
+                  )}
+                </div>
+              ))}
             </div>
-          );
-        })}
-      </div>
+          </div>
+        </div>
+      </main>
 
-      {(status === "waiting" || status === "round_over") && self && (
-        <button
-          onClick={handleStartRound}
-          disabled={busy}
-          className="h-12 w-full max-w-xs rounded-lg bg-foreground font-medium text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
-        >
-          Start round
-        </button>
-      )}
+      <footer className="relative z-20 flex min-h-[132px] flex-col items-center justify-center gap-3 border-t border-brass/15 bg-ink/85 px-4 py-4 backdrop-blur-sm sm:min-h-[148px] sm:py-5">
+        {!self && (
+          <p className="text-sm text-cream-dim">You&apos;re watching this table from the rail.</p>
+        )}
 
-      {(status === "waiting" || status === "round_over") && self && self.balance === 0 && (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Out of chips — claim free chips before starting a round.
-        </p>
-      )}
+        {self && self.balance === 0 && self.bet === 0 && (
+          <div className="flex flex-col items-center gap-2">
+            <p className="text-xs uppercase tracking-[0.2em] text-cream-dim">Cleaned out</p>
+            <GhostButton onClick={() => post("/rebuy", undefined, "Could not claim free chips.")} disabled={busy}>
+              Ask the house for chips
+            </GhostButton>
+          </div>
+        )}
 
-      {status === "betting" && self && self.balance === 0 && (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Sitting out this round — you&apos;re out of chips.
-        </p>
-      )}
-
-      {status === "betting" && self && self.bet === 0 && self.balance > 0 && (
-        <form onSubmit={handleBet} className="flex w-full max-w-xs gap-2">
-          <input
-            type="number"
-            min={1}
-            max={self.balance}
-            value={betInput}
-            onChange={(e) => setBetInput(e.target.value)}
-            className="h-12 flex-1 rounded-lg border border-black/[.08] bg-white px-4 text-base outline-none focus:border-black/30 dark:border-white/[.145] dark:bg-zinc-900 dark:focus:border-white/40"
-          />
-          <button
-            type="submit"
-            disabled={busy}
-            className="h-12 rounded-lg bg-foreground px-5 font-medium text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
-          >
-            Bet
-          </button>
-        </form>
-      )}
-
-      {status === "betting" && self && self.bet > 0 && (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Bet placed, waiting on other players...
-        </p>
-      )}
-
-      {status === "playing" && isMyTurn && self && (
-        <div className="flex w-full max-w-xs gap-2">
-          <button
-            onClick={() => handleAction("hit")}
-            disabled={busy}
-            className="h-12 flex-1 rounded-lg bg-foreground font-medium text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
-          >
-            Hit
-          </button>
-          <button
-            onClick={() => handleAction("stand")}
-            disabled={busy}
-            className="h-12 flex-1 rounded-lg border border-black/[.08] font-medium transition-colors hover:bg-black/[.04] disabled:opacity-50 dark:border-white/[.145] dark:hover:bg-[#1a1a1a]"
-          >
-            Stand
-          </button>
-          {self.hand.length === 2 && self.balance >= self.bet && (
-            <button
-              onClick={() => handleAction("double")}
+        {self && (status === "waiting" || status === "round_over") && (
+          <>
+            <BrassButton
+              onClick={() => post("/start-round", undefined, "Could not start the round.")}
               disabled={busy}
-              className="h-12 flex-1 rounded-lg border border-black/[.08] font-medium transition-colors hover:bg-black/[.04] disabled:opacity-50 dark:border-white/[.145] dark:hover:bg-[#1a1a1a]"
+              className="w-full max-w-xs"
             >
-              Double
-            </button>
-          )}
+              {status === "round_over" ? "Next hand" : "Deal me in"}
+            </BrassButton>
+            <p className="text-[11px] tracking-[0.1em] text-cream-dim">
+              {players.length < 2
+                ? "Share the table code and others can sit in before the deal."
+                : `${players.length} cats at the table.`}
+            </p>
+          </>
+        )}
+
+        {self && status === "betting" && self.bet === 0 && self.balance > 0 && (
+          <BetRack
+            balance={self.balance}
+            busy={busy}
+            onBet={(amount) => post("/bet", { amount }, "Could not place that bet.")}
+          />
+        )}
+
+        {self && status === "betting" && self.bet === 0 && self.balance === 0 && (
+          <p className="text-xs uppercase tracking-[0.2em] text-cream-dim">
+            Sitting this one out — no chips
+          </p>
+        )}
+
+        {self && status === "betting" && self.bet > 0 && (
+          <p className="text-sm text-cream-dim">
+            <span className="font-mono text-brass-lit">{self.bet}</span> in the circle — waiting on the rest of the table…
+          </p>
+        )}
+
+        {self && status === "playing" && isMyTurn && (
+          <div className="flex w-full max-w-md flex-col items-center gap-2">
+            <div className="flex w-full gap-2">
+              <BrassButton onClick={() => act("hit")} disabled={busy} className="flex-1">
+                Hit <span className="opacity-50">H</span>
+              </BrassButton>
+              <GhostButton onClick={() => act("stand")} disabled={busy} className="flex-1">
+                Stand <span className="opacity-50">S</span>
+              </GhostButton>
+              {canDouble && (
+                <GhostButton onClick={() => act("double")} disabled={busy} className="flex-1">
+                  Double <span className="opacity-50">D</span>
+                </GhostButton>
+              )}
+            </div>
+            {secondsLeft !== null && (
+              <p className={`font-mono text-xs tabular-nums ${secondsLeft <= 5 ? "text-ruby" : "text-cream-dim"}`}>
+                {secondsLeft}s to act
+              </p>
+            )}
+          </div>
+        )}
+
+        {self && status === "playing" && !isMyTurn && (
+          <p className="text-sm text-cream-dim">
+            {turnPlayer ? (
+              <>
+                Waiting on <span className="text-brass-lit">{turnPlayer.username}</span>
+                {secondsLeft !== null && <span className="font-mono"> · {secondsLeft}s</span>}
+              </>
+            ) : (
+              "Dealer is working…"
+            )}
+          </p>
+        )}
+      </footer>
+
+      {toast && (
+        <div className="pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 animate-banner">
+          <div
+            className={`rounded-full border px-5 py-2 text-xs uppercase tracking-[0.18em] backdrop-blur ${
+              toast.tone === "error"
+                ? "border-ruby/50 bg-ruby/15 text-[#ffb7c0]"
+                : "border-brass/50 bg-brass/10 text-brass-lit"
+            }`}
+          >
+            {toast.message}
+          </div>
         </div>
       )}
-
-      {status === "playing" && !isMyTurn && (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">Waiting for other players...</p>
-      )}
-
-      {status === "round_over" && (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Round over. Dealer {handValue(dealerHand).isBust ? "busts" : `has ${handValue(dealerHand).total}`}.
-          Balances updated — start another round when ready.
-        </p>
-      )}
-
-      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
     </div>
   );
 }

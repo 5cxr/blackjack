@@ -97,6 +97,32 @@ export async function getUserAvatar(userId: string): Promise<AvatarConfig> {
   return { color: user.avatarColor, eyes: user.avatarEyes, face: user.avatarFace };
 }
 
+export interface UserProfile {
+  username: string;
+  balance: number;
+  avatar: AvatarConfig;
+}
+
+/** Everything the lobby shows about the signed-in player. */
+export async function getUserProfile(userId: string): Promise<UserProfile | null> {
+  const [user] = await db
+    .select({
+      username: users.username,
+      balance: users.balance,
+      avatarColor: users.avatarColor,
+      avatarEyes: users.avatarEyes,
+      avatarFace: users.avatarFace,
+    })
+    .from(users)
+    .where(eq(users.id, userId));
+  if (!user) return null;
+  return {
+    username: user.username,
+    balance: user.balance,
+    avatar: { color: user.avatarColor, eyes: user.avatarEyes, face: user.avatarFace },
+  };
+}
+
 export async function updateUserAvatar(userId: string, avatar: AvatarConfig): Promise<void> {
   await db
     .update(users)

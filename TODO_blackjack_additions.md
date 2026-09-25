@@ -1,8 +1,9 @@
 # Blackjack Additions Spec
 
-Status: #1 (bankrupt currency handling) implemented. #2 (table UI/UX) and #3
-(cat avatars) still planning-only. Grounded in current code
-(`src/lib/rooms.ts`, `src/db/schema.ts`, `src/components/room-view.tsx`).
+Status: all three shipped. #1 bankrupt currency handling, #2 table UI/UX
+(oval felt, fixed seats, turn ring, server-enforced auto-stand), #3 cat
+avatars — plus a full art-deco redesign ("Whisker Jack"): start screen,
+lobby, chip-based betting, SVG cards, rules popover, themed 404.
 
 ---
 
@@ -55,7 +56,16 @@ Chosen numbers: 500 chip rebuy, 1 hour cooldown.
 
 ---
 
-## 2. Table UI/UX
+## 2. Table UI/UX — DONE
+
+Shipped: oval felt with a brass rail (`room-view.tsx`), six fixed seats on the
+lower arc of the ellipse, dealer hand at the top with a shoe parked on the
+felt, current-turn glow plus a draining ring around the acting cat, and
+auto-stand at 20s enforced server-side (`rooms.turnStartedAt` +
+`autoStandOnTimeout`, nudged by any seated client). Betting is a chip rack
+rather than a number input; seats show chip stacks, hand totals and per-hand
+net at settle. Sizing is a fixed 1000px design scaled with CSS `zoom` across
+width and height breakpoints.
 
 ### Layout
 
@@ -96,7 +106,14 @@ rejected by the server, which feels broken.)
 
 ---
 
-## 3. Cat avatars
+## 3. Cat avatars — DONE
+
+Shipped: eight patterned coats (tabby / tuxedo / calico / siamese points /
+spots), six eye variants (including slit-pupil round, sly and dollar-sign
+"lucky") and six mouths, all layered SVG in `cat-avatar.tsx` with coat-driven
+iris, nose and whisker colours. Picker cycles each parameter with arrows plus
+a "surprise me" roll; editable in the lobby any time and at the table only
+while the room is `waiting`.
 
 Three independent, cycling parameters — color, eyes, face — combined
 skribbl.io-style: big preview in the middle, left/right arrow pair next to
