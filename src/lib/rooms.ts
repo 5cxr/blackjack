@@ -167,19 +167,39 @@ export async function startRound(code: string, userId: string) {
     const [room] = await tx.select().from(rooms).where(eq(rooms.code, code)).for("update");
     if (!room) throw new RoomError("Room not found.");
     if (isExpired(room.lastActiveAt)) throw new RoomError("This room closed due to inactivity.");
-    if (room.status !== "waiting" && room.status !== "round_over") {
-      throw new RoomError("A round is already in progress.");
-    }
 
     const players = await tx.select().from(roomPlayers).where(eq(roomPlayers.roomId, room.id));
     if (!players.some((p) => p.userId === userId)) {
       throw new RoomError("You are not seated at this table.");
     }
 
+    // A betting phase with no bets in it may be one nobody could bet into (all
+    // seats broke). Nothing else can move that room on, so allow a restart out
+    // of it rather than leaving the table stranded there.
+    const stalledBetting = room.status === "betting" && players.every((p) => p.bet === 0);
+    if (room.status !== "waiting" && room.status !== "round_over" && !stalledBetting) {
+      throw new RoomError("A round is already in progress.");
+    }
+
+    const balances = await tx
+      .select({ balance: users.balance })
+      .from(users)
+      .where(
+        inArray(
+          users.id,
+          players.map((p) => p.userId)
+        )
+      );
+
+    // Opening betting when nobody can bet is the dead end above: no bet is
+    // possible, so the round never deals and the status never changes again.
+    // Park in waiting instead — both rebuy and new joins are allowed there.
+    const anyoneHasChips = balances.some((u) => u.balance > 0);
+
     const [updatedRoom] = await tx
       .update(rooms)
       .set({
-        status: "betting",
+        status: anyoneHasChips ? "betting" : "waiting",
         currentTurnSeat: null,
         turnStartedAt: null,
         dealerHand: [],
@@ -502,17 +522,20 @@ export async function autoStandOnTimeout(code: string, callerId: string) {
 export async function claimFreeChips(code: string, userId: string) {
   const result = await db.transaction(async (tx) => {
     const [player] = await tx
-      .select({ id: roomPlayers.id, roomStatus: rooms.status })
+      .select({ id: roomPlayers.id, bet: roomPlayers.bet, roomStatus: rooms.status })
       .from(roomPlayers)
       .innerJoin(rooms, eq(rooms.id, roomPlayers.roomId))
       .where(and(eq(rooms.code, code), eq(roomPlayers.userId, userId)));
     if (!player) throw new RoomError("You are not seated at this table.");
     // Balance hits 0 the instant an all-in bet is placed, before the round
-    // resolves — claiming here mid-round would reset balance to a flat 500
-    // while that bet is still live, stacking free chips on top of whatever
-    // it pays out. Only allow a claim between rounds.
-    if (player.roomStatus === "betting" || player.roomStatus === "playing") {
-      throw new RoomError("Can't claim free chips mid-round, wait for it to finish.");
+    // resolves — claiming then would reset balance to a flat 500 while that
+    // bet is still live, stacking free chips on top of whatever it pays out.
+    // A live stake, not the round itself, is what blocks a claim: a broke seat
+    // with no bet down needs to be able to rebuy during the betting phase,
+    // otherwise a table where everyone is broke can never bet its way out.
+    const roundLive = player.roomStatus === "betting" || player.roomStatus === "playing";
+    if (roundLive && player.bet > 0) {
+      throw new RoomError("Can't claim free chips with a bet on the table, wait for the round to finish.");
     }
 
     const [user] = await tx.select().from(users).where(eq(users.id, userId)).for("update");

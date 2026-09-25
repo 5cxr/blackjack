@@ -41,7 +41,7 @@ export function suitOf(card: Card): Suit {
   return card.slice(-1) as Suit;
 }
 
-const SUIT_SYMBOLS: Record<Suit, string> = { S: "♠", H: "♥", D: "♦", C: "♣" };
+export const SUIT_SYMBOLS: Record<Suit, string> = { S: "♠", H: "♥", D: "♦", C: "♣" };
 
 export function formatCard(card: Card): string {
   return `${rankOf(card)}${SUIT_SYMBOLS[suitOf(card)]}`;

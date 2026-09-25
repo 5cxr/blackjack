@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { formatCard, handValue, type Card } from "@/lib/cards";
+import { handValue, type Card } from "@/lib/cards";
 import { computePayout } from "@/lib/payouts";
 import { TURN_SECONDS } from "@/lib/turn-timer";
 import type { AvatarConfig } from "@/lib/avatar";
 import CatAvatar from "./cat-avatar";
 import AvatarPicker from "./avatar-picker";
+import { PlayingCard, CardBack } from "./playing-card";
 
 interface Player {
   seat: number;
@@ -52,12 +53,16 @@ function Hand({ cards }: { cards: Card[] }) {
   if (cards.length === 0) return null;
   const value = handValue(cards);
   return (
-    <div className="flex items-center gap-1 text-xs">
-      <span className="font-mono tracking-wide text-black dark:text-zinc-50">
-        {cards.map(formatCard).join(" ")}
-      </span>
+    <div className="flex flex-col items-center gap-0.5">
+      <div className="flex">
+        {cards.map((card, i) => (
+          <div key={i} className={i > 0 ? "-ml-3" : ""}>
+            <PlayingCard card={card} />
+          </div>
+        ))}
+      </div>
       <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
-        ({value.isBust ? "bust" : value.total})
+        {value.isBust ? "bust" : value.total}
       </span>
     </div>
   );
@@ -348,7 +353,7 @@ export default function RoomView({
           </p>
         )}
         <div className="flex gap-2">
-          {self && self.balance === 0 && (status === "waiting" || status === "round_over") && (
+          {self && self.balance === 0 && self.bet === 0 && (
             <button
               onClick={handleRebuy}
               disabled={busy}
@@ -375,19 +380,27 @@ export default function RoomView({
       </div>
 
       <div
-        className="relative w-full max-w-3xl border-4 border-emerald-900/40 bg-[radial-gradient(ellipse_at_center,_#0f6b45,_#0a4a30)] shadow-inner"
-        style={{ aspectRatio: "2 / 1.3", borderRadius: "50% / 40%" }}
+        className="relative mb-14 w-full max-w-3xl border-4 border-emerald-900/40 bg-[radial-gradient(ellipse_at_center,_#0f6b45,_#0a4a30)] shadow-inner"
+        style={{ aspectRatio: "2 / 1.3", borderRadius: "50%" }}
       >
         <div className="absolute left-1/2 top-[14%] flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1">
           <span className="text-[10px] font-medium uppercase tracking-wide text-emerald-100/70">Dealer</span>
           {dealerHand.length > 0 ? (
-            <div className="flex items-center gap-1.5 rounded-lg bg-black/20 px-2 py-1">
-              <span className="font-mono text-sm tracking-wide text-white">
-                {dealerHand.map(formatCard).join(" ")}
-                {status === "playing" && dealerHand.length === 1 ? " 🂠" : ""}
-              </span>
+            <div className="flex flex-col items-center gap-1">
+              <div className="flex">
+                {dealerHand.map((card, i) => (
+                  <div key={i} className={i > 0 ? "-ml-4" : ""}>
+                    <PlayingCard card={card} size="md" />
+                  </div>
+                ))}
+                {status === "playing" && dealerHand.length === 1 && (
+                  <div className="-ml-4">
+                    <CardBack size="md" />
+                  </div>
+                )}
+              </div>
               {dealerHand.length > 1 && (
-                <span className="text-xs text-emerald-100/70">({handValue(dealerHand).total})</span>
+                <span className="text-xs text-emerald-100/80">{handValue(dealerHand).total}</span>
               )}
             </div>
           ) : (
@@ -431,6 +444,12 @@ export default function RoomView({
         >
           Start round
         </button>
+      )}
+
+      {(status === "waiting" || status === "round_over") && self && self.balance === 0 && (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          Out of chips — claim free chips before starting a round.
+        </p>
       )}
 
       {status === "betting" && self && self.balance === 0 && (
